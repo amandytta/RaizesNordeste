@@ -1,6 +1,7 @@
 .env
 .env.*
 !.env.example
+application-local.properties
 
 HELP.md
 target/
