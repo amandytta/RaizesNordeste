@@ -34,12 +34,15 @@ public class SecurityConfig {
                         .requestMatchers(
                                 HttpMethod.GET,
                                 "/api/unidades",
-                                "/api/unidades/*"
+                                "/api/unidades/*",
+                                "/api/categorias",
+                                "/api/categorias/*"
                         ).permitAll()
 
                         .requestMatchers(
                                 HttpMethod.POST,
-                                "/api/unidades"
+                                "/api/unidades",
+                                "/api/categorias"
                         ).hasRole("ADMIN")
 
                         .anyRequest().authenticated()
