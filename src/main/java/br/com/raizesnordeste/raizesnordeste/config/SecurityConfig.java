@@ -36,13 +36,16 @@ public class SecurityConfig {
                                 "/api/unidades",
                                 "/api/unidades/*",
                                 "/api/categorias",
-                                "/api/categorias/*"
+                                "/api/categorias/*",
+                                "/api/produtos",
+                                "/api/produtos/*"
                         ).permitAll()
 
                         .requestMatchers(
                                 HttpMethod.POST,
                                 "/api/unidades",
-                                "/api/categorias"
+                                "/api/categorias",
+                                "/api/produtos"
                         ).hasRole("ADMIN")
 
                         .anyRequest().authenticated()
