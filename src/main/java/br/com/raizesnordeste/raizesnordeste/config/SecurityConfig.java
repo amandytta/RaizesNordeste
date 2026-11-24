@@ -38,14 +38,22 @@ public class SecurityConfig {
                                 "/api/categorias",
                                 "/api/categorias/*",
                                 "/api/produtos",
-                                "/api/produtos/*"
+                                "/api/produtos/*",
+                                "/api/produtos-unidades/cardapio/*"
                         ).permitAll()
+
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/produtos-unidades",
+                                "/api/produtos-unidades/*"
+                        ).hasRole("ADMIN")
 
                         .requestMatchers(
                                 HttpMethod.POST,
                                 "/api/unidades",
                                 "/api/categorias",
-                                "/api/produtos"
+                                "/api/produtos",
+                                "/api/produtos-unidades"
                         ).hasRole("ADMIN")
 
                         .anyRequest().authenticated()
