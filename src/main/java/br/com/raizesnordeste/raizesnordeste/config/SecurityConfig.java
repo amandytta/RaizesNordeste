@@ -31,8 +31,9 @@ public class SecurityConfig {
                 )
 
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(
-                                HttpMethod.GET,
+
+                        // permite consultas públicas de unidades, categorias, produtos e cardápios
+                        .requestMatchers(HttpMethod.GET,
                                 "/api/unidades",
                                 "/api/unidades/*",
                                 "/api/categorias",
@@ -42,20 +43,28 @@ public class SecurityConfig {
                                 "/api/produtos-unidades/cardapio/*"
                         ).permitAll()
 
-                        .requestMatchers(
-                                HttpMethod.GET,
+                        // restringe as consultas administrativas de produtos por unidade ao perfil ADMIN
+                        .requestMatchers(HttpMethod.GET,
                                 "/api/produtos-unidades",
                                 "/api/produtos-unidades/*"
                         ).hasRole("ADMIN")
 
-                        .requestMatchers(
-                                HttpMethod.POST,
+                        // somente administradores podem cadastrar unidades, categorias, produtos e associações
+                        .requestMatchers(HttpMethod.POST,
                                 "/api/unidades",
                                 "/api/categorias",
                                 "/api/produtos",
                                 "/api/produtos-unidades"
                         ).hasRole("ADMIN")
 
+                        // protege todos os endpoints de movimentação de estoque
+                        // somente usuários com o perfil ADMIN podem consultar o histórico ou registrar movimentações
+                        .requestMatchers(
+                                "/api/movimentacoes-estoque",
+                                "/api/movimentacoes-estoque/**"
+                        ).hasRole("ADMIN")
+
+                        // exige autenticação para as demais requisições
                         .anyRequest().authenticated()
                 )
 
