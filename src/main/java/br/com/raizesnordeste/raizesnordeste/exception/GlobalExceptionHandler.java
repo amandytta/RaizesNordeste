@@ -2,14 +2,19 @@ package br.com.raizesnordeste.raizesnordeste.exception;
 
 import br.com.raizesnordeste.raizesnordeste.dto.ErroResponseDTO;
 import jakarta.servlet.http.HttpServletRequest;
+
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.AccountStatusException;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 
 import java.time.LocalDateTime;
+
 import java.util.NoSuchElementException;
 import java.util.stream.Collectors;
 
@@ -85,6 +90,31 @@ public class GlobalExceptionHandler {
                 request.getRequestURI()
         );
 
+        return ResponseEntity.status(status).body(erro);
+    }
+
+    // trata falhas de autenticacao sem revelar informacoes sobre a conta
+    @ExceptionHandler({
+            BadCredentialsException.class,
+            AccountStatusException.class,
+            UsernameNotFoundException.class
+    })
+    public ResponseEntity<ErroResponseDTO> tratarFalhaAutenticacao(
+            HttpServletRequest request) {
+
+        // define o status HTTP 401 para credenciais invalidas
+        HttpStatus status = HttpStatus.UNAUTHORIZED;
+
+        // cria uma resposta de erro padronizada e segura
+        ErroResponseDTO erro = new ErroResponseDTO(
+                LocalDateTime.now(),
+                status.value(),
+                "Não autorizado",
+                "Credenciais inválidas.",
+                request.getRequestURI()
+        );
+
+        // retorna a resposta sem expor detalhes internos da autenticacao
         return ResponseEntity.status(status).body(erro);
     }
 }
