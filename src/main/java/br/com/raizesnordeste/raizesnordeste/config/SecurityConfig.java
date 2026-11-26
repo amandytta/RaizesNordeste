@@ -45,10 +45,11 @@ public class SecurityConfig {
                 // define as regras de acesso aos endpoints
                 .authorizeHttpRequests(auth -> auth
 
-                        // permite que usuarios nao autenticados realizem login
-                        .requestMatchers(HttpMethod.POST,
-                                "/api/auth/login"
-                        ).permitAll()
+                        // permite que usuarios não autenticados realizem login
+                        .requestMatchers(HttpMethod.POST, "/api/auth/login").permitAll()
+
+                        // permite o cadastro publico de novos clientes
+                        .requestMatchers(HttpMethod.POST, "/api/usuarios/cadastro").permitAll()
 
                         // permite consultas publicas de unidades, categorias, produtos e cardapios
                         .requestMatchers(HttpMethod.GET,

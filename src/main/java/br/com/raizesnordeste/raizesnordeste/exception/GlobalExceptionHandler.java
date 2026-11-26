@@ -117,4 +117,27 @@ public class GlobalExceptionHandler {
         // retorna a resposta sem expor detalhes internos da autenticacao
         return ResponseEntity.status(status).body(erro);
     }
+
+    // trata erros de validacao identificados na camada de serviço
+    // retorna HTTP 400 sem alterar o tratamento dos conflitos
+    @ExceptionHandler(DadosInvalidosException.class)
+    public ResponseEntity<ErroResponseDTO> tratarDadosInvalidos(
+            DadosInvalidosException ex,
+            HttpServletRequest request
+    ) {
+
+        // monta a resposta seguindo o padrão de erros da API
+        ErroResponseDTO erro = new ErroResponseDTO(
+                LocalDateTime.now(),
+                HttpStatus.BAD_REQUEST.value(),
+                "Requisição inválida",
+                ex.getMessage(),
+                request.getRequestURI()
+        );
+
+        // retorna HTTP 400 com os detalhes do erro
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(erro);
+    }
 }
