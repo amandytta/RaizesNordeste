@@ -884,4 +884,122 @@ class AuthIntegrationTest {
                         "Bearer"
                 ));
     }
+
+    // realiza o login real e recupera o JWT do usuário temporário
+    private String autenticarUsuario(String email) throws Exception {
+        String json = """
+                {
+                    "email": "%s",
+                    "senha": "%s"
+                }
+                """.formatted(email, SENHA_TESTE);
+
+        String resposta = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.token").isNotEmpty())
+                .andReturn().getResponse().getContentAsString();
+
+        // extrai o token sem imprimi-lo no terminal
+        return JsonPath.read(resposta, "$.token");
+    }
+
+    // altera exclusivamente o perfil de um usuário criado pelo teste
+    private void alterarPerfilTeste(String email, String novoPerfil) {
+        verificarAmbienteDeTestes();
+        // impede alterações em usuários que não pertencem ao teste
+        assertEquals(true, emailsUsuariosTeste.contains(email));
+
+        Long usuarioId = jdbcTemplate.queryForObject(
+                "SELECT id FROM usuario WHERE email = ?", Long.class, email);
+        Long perfilId = jdbcTemplate.queryForObject(
+                "SELECT id FROM perfil WHERE nome = ?", Long.class, novoPerfil);
+
+        // substitui o perfil anterior pelo novo perfil
+        assertEquals(1, jdbcTemplate.update(
+                "UPDATE usuario_perfil SET perfil_id = ? WHERE usuario_id = ?",
+                perfilId, usuarioId));
+    }
+
+    // teste 14: impede que um administrador rebaixado mantenha privilégios
+    @Test
+    void deveRejeitarTokenAntigoAposRebaixamentoDeAdministrador() throws Exception {
+        String email = criarUsuarioTeste("ADMIN", true);
+        String tokenAntigo = autenticarUsuario(email);
+
+        // confirma o acesso administrativo antes da alteração
+        mockMvc.perform(get("/api/usuarios")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + tokenAntigo))
+                .andExpect(status().isOk());
+
+        // simula a perda do perfil administrativo no banco de testes
+        alterarPerfilTeste(email, "GERENTE");
+
+        // exige nova autenticação mesmo que o token ainda não tenha expirado
+        mockMvc.perform(get("/api/usuarios")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + tokenAntigo))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.status").value(401));
+
+        // confirma que o novo login reconhece somente o perfil atualizado
+        String tokenNovo = autenticarUsuario(email);
+        assertEquals(List.of("ROLE_GERENTE"),
+                jwtDecoder.decode(tokenNovo).getClaimAsStringList("roles"));
+        mockMvc.perform(get("/api/usuarios")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + tokenNovo))
+                .andExpect(status().isForbidden());
+    }
+
+    // teste 15: impede o uso de um JWT emitido antes da desativação da conta
+    @Test
+    void deveRejeitarTokenDeUsuarioDesativado() throws Exception {
+        String email = criarUsuarioTeste("ADMIN", true);
+        String token = autenticarUsuario(email);
+
+        // confirma que o token era aceito antes da desativação
+        mockMvc.perform(get("/api/usuarios")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+                .andExpect(status().isOk());
+
+        // desativa somente o usuário temporário no ambiente isolado
+        verificarAmbienteDeTestes();
+        assertEquals(1, jdbcTemplate.update(
+                "UPDATE usuario SET ativo = 0 WHERE email = ?", email));
+
+        // confirma que o token anterior não permite mais autenticação
+        mockMvc.perform(get("/api/usuarios")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.status").value(401));
+    }
+
+    // teste 16: impede a elevação automática de privilégios de um JWT antigo
+    @Test
+    void deveExigirNovoLoginAposPromocaoDeUsuario() throws Exception {
+        String email = criarUsuarioTeste("GERENTE", true);
+        String tokenAntigo = autenticarUsuario(email);
+
+        // confirma que o gerente inicialmente não possui acesso administrativo
+        mockMvc.perform(get("/api/usuarios")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + tokenAntigo))
+                .andExpect(status().isForbidden());
+
+        // simula uma promoção exclusivamente no banco de testes
+        alterarPerfilTeste(email, "ADMIN");
+
+        // o token antigo deve ser rejeitado, sem receber novos privilégios
+        mockMvc.perform(get("/api/usuarios")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + tokenAntigo))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.status").value(401));
+
+        // somente um novo login deve conceder o perfil administrativo atualizado
+        String tokenNovo = autenticarUsuario(email);
+        assertEquals(List.of("ROLE_ADMIN"),
+                jwtDecoder.decode(tokenNovo).getClaimAsStringList("roles"));
+        mockMvc.perform(get("/api/usuarios")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + tokenNovo))
+                .andExpect(status().isOk());
+    }
 }

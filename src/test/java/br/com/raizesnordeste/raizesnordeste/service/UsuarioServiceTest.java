@@ -4,6 +4,7 @@ import br.com.raizesnordeste.raizesnordeste.repository.UsuarioRepository;
 import br.com.raizesnordeste.raizesnordeste.repository.PerfilRepository;
 import br.com.raizesnordeste.raizesnordeste.dto.UsuarioCadastroRequestDTO;
 import br.com.raizesnordeste.raizesnordeste.dto.UsuarioResponseDTO;
+import br.com.raizesnordeste.raizesnordeste.dto.FuncionarioCadastroRequestDTO;
 import br.com.raizesnordeste.raizesnordeste.entity.Usuario;
 import br.com.raizesnordeste.raizesnordeste.entity.Perfil;
 import br.com.raizesnordeste.raizesnordeste.exception.DadosInvalidosException;
@@ -21,6 +22,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Optional;
 import java.util.Set;
+import java.util.List;
+import java.util.NoSuchElementException;
 
 import java.nio.charset.StandardCharsets;
 
@@ -602,5 +605,347 @@ class UsuarioServiceTest {
 
         // confirma que o usuario foi enviado para persistencia
         verify(usuarioRepository).save(any(Usuario.class));
+    }
+
+    // verifica se um atendente pode ser cadastrado corretamente
+    @Test
+    void deveCadastrarAtendenteComSucesso() {
+
+        // prepara os dados de cadastro do funcionário
+        FuncionarioCadastroRequestDTO dto =
+                new FuncionarioCadastroRequestDTO(
+                        "Atendente Teste",
+                        "atendente@raizes.local",
+                        "SenhaTeste@2026!",
+                        "ATENDENTE"
+                );
+
+        // prepara o perfil que será associado ao funcionário
+        Perfil perfil = new Perfil();
+        perfil.setNome("ATENDENTE");
+
+        // simula as operações das dependências
+        when(usuarioRepository.existsByEmail(dto.email()))
+                .thenReturn(false);
+
+        when(perfilRepository.findByNome("ATENDENTE"))
+                .thenReturn(Optional.of(perfil));
+
+        when(passwordEncoder.encode(dto.senha()))
+                .thenReturn("hash-simulado");
+
+        when(usuarioRepository.save(any(Usuario.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        // executa o cadastro administrativo
+        UsuarioResponseDTO resposta =
+                usuarioService.cadastrarFuncionario(dto);
+
+        // verifica os dados retornados
+        assertEquals(dto.nome(), resposta.nome());
+        assertEquals(dto.email(), resposta.email());
+        assertTrue(resposta.ativo());
+        assertEquals(Set.of("ATENDENTE"), resposta.perfis());
+
+        // captura a entidade enviada para persistência
+        ArgumentCaptor<Usuario> captor =
+                ArgumentCaptor.forClass(Usuario.class);
+
+        verify(usuarioRepository).save(captor.capture());
+
+        // garante que a senha foi codificada e o perfil é exclusivo
+        assertEquals("hash-simulado", captor.getValue().getSenhaHash());
+        assertEquals(Set.of(perfil), captor.getValue().getPerfis());
+    }
+
+    // verifica se um gerente pode ser cadastrado corretamente
+    @Test
+    void deveCadastrarGerenteComSucesso() {
+
+        // prepara os dados do gerente
+        FuncionarioCadastroRequestDTO dto =
+                new FuncionarioCadastroRequestDTO(
+                        "Gerente Teste",
+                        "gerente@raizes.local",
+                        "SenhaTeste@2026!",
+                        "GERENTE"
+                );
+
+        // prepara o perfil de gerente
+        Perfil perfil = new Perfil();
+        perfil.setNome("GERENTE");
+
+        // simula as operações das dependências
+        when(usuarioRepository.existsByEmail(dto.email()))
+                .thenReturn(false);
+
+        when(perfilRepository.findByNome("GERENTE"))
+                .thenReturn(Optional.of(perfil));
+
+        when(passwordEncoder.encode(dto.senha()))
+                .thenReturn("hash-simulado");
+
+        when(usuarioRepository.save(any(Usuario.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        // executa o cadastro administrativo
+        UsuarioResponseDTO resposta =
+                usuarioService.cadastrarFuncionario(dto);
+
+        // verifica os dados e o perfil retornado
+        assertEquals(dto.nome(), resposta.nome());
+        assertEquals(dto.email(), resposta.email());
+        assertTrue(resposta.ativo());
+        assertEquals(Set.of("GERENTE"), resposta.perfis());
+
+        // verifica se o funcionário foi persistido
+        verify(usuarioRepository).save(any(Usuario.class));
+    }
+
+    // verifica se o cadastro de funcionários impede a criação de administradores
+    @Test
+    void deveRejeitarCadastroDeFuncionarioComPerfilAdmin() {
+
+        // prepara uma tentativa de cadastro com perfil não permitido
+        FuncionarioCadastroRequestDTO dto =
+                new FuncionarioCadastroRequestDTO(
+                        "Administrador Teste",
+                        "admin.teste@raizes.local",
+                        "SenhaTeste@2026!",
+                        "ADMIN"
+                );
+
+        // verifica se a operação é rejeitada
+        DadosInvalidosException excecao = assertThrows(
+                DadosInvalidosException.class,
+                () -> usuarioService.cadastrarFuncionario(dto)
+        );
+
+        // confirma a mensagem da regra de negócio
+        assertEquals(
+                "O perfil deve ser ATENDENTE ou GERENTE.",
+                excecao.getMessage()
+        );
+
+        // garante que nenhuma dependência foi utilizada
+        verifyNoInteractions(
+                usuarioRepository,
+                perfilRepository,
+                passwordEncoder
+        );
+    }
+
+    // verifica se o cadastro administrativo rejeita o perfil CLIENTE
+    @Test
+    void deveRejeitarCadastroDeFuncionarioComPerfilCliente() {
+
+        // prepara uma tentativa de cadastro com perfil incompatível
+        FuncionarioCadastroRequestDTO dto =
+                new FuncionarioCadastroRequestDTO(
+                        "Cliente Teste",
+                        "cliente@raizes.local",
+                        "SenhaTeste@2026!",
+                        "CLIENTE"
+                );
+
+        // verifica se a operação é rejeitada
+        DadosInvalidosException excecao = assertThrows(
+                DadosInvalidosException.class,
+                () -> usuarioService.cadastrarFuncionario(dto)
+        );
+
+        // confirma a mensagem retornada
+        assertEquals(
+                "O perfil deve ser ATENDENTE ou GERENTE.",
+                excecao.getMessage()
+        );
+
+        // garante que nenhuma operação de persistência foi iniciada
+        verifyNoInteractions(
+                usuarioRepository,
+                perfilRepository,
+                passwordEncoder
+        );
+    }
+
+    // verifica se o cadastro administrativo rejeita e-mails duplicados
+    @Test
+    void deveRejeitarCadastroDeFuncionarioComEmailDuplicado() {
+
+        // Prepara os dados do funcionário.
+        FuncionarioCadastroRequestDTO dto =
+                new FuncionarioCadastroRequestDTO(
+                        "Gerente Teste",
+                        "gerente@raizes.local",
+                        "SenhaTeste@2026!",
+                        "GERENTE"
+                );
+
+        // simula a existência de um usuário com o mesmo e-mail
+        when(usuarioRepository.existsByEmail(dto.email()))
+                .thenReturn(true);
+
+        // verifica se o cadastro é rejeitado
+        IllegalArgumentException excecao = assertThrows(
+                IllegalArgumentException.class,
+                () -> usuarioService.cadastrarFuncionario(dto)
+        );
+
+        // confirma a mensagem de conflito
+        assertEquals(
+                "Já existe um usuário cadastrado com este e-mail.",
+                excecao.getMessage()
+        );
+
+        // garante que nenhum novo usuário foi persistido
+        verify(usuarioRepository, never()).save(any(Usuario.class));
+
+        // garante que o processamento não avançou
+        verifyNoInteractions(perfilRepository, passwordEncoder);
+    }
+
+    // verifica se o cadastro administrativo respeita o limite do BCrypt
+    @Test
+    void deveRejeitarSenhaDeFuncionarioSuperiorA72Bytes() {
+
+        // cria uma senha de 37 caracteres que ocupa 74 bytes em UTF-8
+        String senha = "á".repeat(37);
+
+        // prepara os dados do funcionário
+        FuncionarioCadastroRequestDTO dto =
+                new FuncionarioCadastroRequestDTO(
+                        "Atendente Teste",
+                        "atendente@raizes.local",
+                        senha,
+                        "ATENDENTE"
+                );
+
+        // simula um e-mail disponível para cadastro
+        when(usuarioRepository.existsByEmail(dto.email()))
+                .thenReturn(false);
+
+        // verifica se a senha é rejeitada
+        DadosInvalidosException excecao = assertThrows(
+                DadosInvalidosException.class,
+                () -> usuarioService.cadastrarFuncionario(dto)
+        );
+
+        // confirma a mensagem de validação
+        assertEquals(
+                "A senha deve possuir no máximo 72 bytes.",
+                excecao.getMessage()
+        );
+
+        // garante que a senha não foi codificada nem persistida
+        verify(usuarioRepository, never()).save(any(Usuario.class));
+        verifyNoInteractions(perfilRepository, passwordEncoder);
+    }
+
+    // verifica se os usuários cadastrados são retornados corretamente
+    @Test
+    void deveListarTodosOsUsuarios() {
+
+        // prepara os perfis dos usuários
+        Perfil perfilCliente = new Perfil();
+        perfilCliente.setNome("CLIENTE");
+
+        Perfil perfilGerente = new Perfil();
+        perfilGerente.setNome("GERENTE");
+
+        // prepara um usuário com perfil de cliente
+        Usuario cliente = new Usuario();
+        ReflectionTestUtils.setField(cliente, "id", 1L);
+        cliente.setNome("Cliente Teste");
+        cliente.setEmail("cliente@raizes.local");
+        cliente.setAtivo(true);
+        cliente.setPerfis(Set.of(perfilCliente));
+
+        // prepara um usuário com perfil de gerente
+        Usuario gerente = new Usuario();
+        ReflectionTestUtils.setField(gerente, "id", 2L);
+        gerente.setNome("Gerente Teste");
+        gerente.setEmail("gerente@raizes.local");
+        gerente.setAtivo(true);
+        gerente.setPerfis(Set.of(perfilGerente));
+
+        // simula os usuários existentes no banco de dados
+        when(usuarioRepository.findAll())
+                .thenReturn(List.of(cliente, gerente));
+
+        // executa a listagem
+        List<UsuarioResponseDTO> resposta =
+                usuarioService.listarTodos();
+
+        // verifica a quantidade de usuários retornados
+        assertEquals(2, resposta.size());
+
+        // verifica os identificadores e perfis retornados
+        assertEquals(1L, resposta.get(0).id());
+        assertEquals(Set.of("CLIENTE"), resposta.get(0).perfis());
+
+        assertEquals(2L, resposta.get(1).id());
+        assertEquals(Set.of("GERENTE"), resposta.get(1).perfis());
+
+        // confirma a consulta ao repository
+        verify(usuarioRepository).findAll();
+    }
+
+    // verifica se um usuário existente pode ser consultado pelo ID
+    @Test
+    void deveBuscarUsuarioPorId() {
+
+        // prepara o perfil do usuário
+        Perfil perfil = new Perfil();
+        perfil.setNome("ATENDENTE");
+
+        // prepara a entidade que será retornada pelo repository
+        Usuario usuario = new Usuario();
+        ReflectionTestUtils.setField(usuario, "id", 1L);
+        usuario.setNome("Atendente Teste");
+        usuario.setEmail("atendente@raizes.local");
+        usuario.setAtivo(true);
+        usuario.setPerfis(Set.of(perfil));
+
+        // simula a consulta ao banco de dados
+        when(usuarioRepository.findById(1L))
+                .thenReturn(Optional.of(usuario));
+
+        // executa a consulta
+        UsuarioResponseDTO resposta =
+                usuarioService.buscarPorId(1L);
+
+        // verifica os dados retornados
+        assertEquals(1L, resposta.id());
+        assertEquals("Atendente Teste", resposta.nome());
+        assertEquals("atendente@raizes.local", resposta.email());
+        assertTrue(resposta.ativo());
+        assertEquals(Set.of("ATENDENTE"), resposta.perfis());
+
+        // confirma a consulta pelo identificador correto
+        verify(usuarioRepository).findById(1L);
+    }
+
+    // verifica o comportamento da consulta de um usuário inexistente
+    @Test
+    void deveRejeitarBuscaDeUsuarioInexistente() {
+
+        // simula a ausência do usuário no banco de dados
+        when(usuarioRepository.findById(999L))
+                .thenReturn(Optional.empty());
+
+        // verifica se a exceção esperada é lançada
+        NoSuchElementException excecao = assertThrows(
+                NoSuchElementException.class,
+                () -> usuarioService.buscarPorId(999L)
+        );
+
+        // confirma a mensagem retornada
+        assertEquals(
+                "Usuário não encontrado.",
+                excecao.getMessage()
+        );
+
+        // confirma a consulta ao repository
+        verify(usuarioRepository).findById(999L);
     }
 }

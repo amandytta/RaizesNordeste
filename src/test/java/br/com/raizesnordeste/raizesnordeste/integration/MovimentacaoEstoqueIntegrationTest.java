@@ -205,6 +205,22 @@ class MovimentacaoEstoqueIntegrationTest {
                 Long.class,
                 emailUsuarioTeste
         );
+
+        // Recupera o perfil administrativo necessário para movimentar estoque.
+        Long perfilAdminId = jdbcTemplate.queryForObject(
+                "SELECT id FROM perfil WHERE nome = ?",
+                Long.class,
+                "ADMIN"
+        );
+
+        // Vincula o perfil ao usuário fictício, somente no banco de testes.
+        jdbcTemplate.update("""
+                INSERT INTO usuario_perfil (usuario_id, perfil_id)
+                VALUES (?, ?)
+                """,
+                usuarioId,
+                perfilAdminId
+        );
     }
 
     // executa a limpeza após cada teste, mesmo quando ele falha
@@ -252,8 +268,15 @@ class MovimentacaoEstoqueIntegrationTest {
             );
         }
 
-        // remove o usuário fictício
+        // remove o perfil associado antes de excluir o usuário fictício
         if (usuarioId != null) {
+            // Respeita a chave estrangeira da tabela usuario_perfil.
+            jdbcTemplate.update(
+                    "DELETE FROM usuario_perfil WHERE usuario_id = ?",
+                    usuarioId
+            );
+
+            // Remove somente o usuário criado para este teste.
             jdbcTemplate.update(
                     "DELETE FROM usuario WHERE id = ?",
                     usuarioId

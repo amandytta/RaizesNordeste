@@ -16,7 +16,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 import java.util.NoSuchElementException;
 
-// camada responsável pelas regras de negócio relacionadas às movimentações de estoque
 @Service
 public class MovimentacaoEstoqueService {
 
@@ -24,20 +23,28 @@ public class MovimentacaoEstoqueService {
     private final ProdutoUnidadeRepository produtoUnidadeRepository;
     private final UsuarioRepository usuarioRepository;
 
-    // injeção de dependências através do construtor
+    // serviço responsável pelas regras de autorização por unidade
+    private final PermissaoUnidadeService permissaoUnidadeService;
+
+    // injeta os repositórios e o serviço de permissões
     public MovimentacaoEstoqueService(
             MovimentacaoEstoqueRepository movimentacaoEstoqueRepository,
             ProdutoUnidadeRepository produtoUnidadeRepository,
-            UsuarioRepository usuarioRepository
-    ) {
+            UsuarioRepository usuarioRepository,
+            PermissaoUnidadeService permissaoUnidadeService) {
+
         this.movimentacaoEstoqueRepository = movimentacaoEstoqueRepository;
         this.produtoUnidadeRepository = produtoUnidadeRepository;
         this.usuarioRepository = usuarioRepository;
+        this.permissaoUnidadeService = permissaoUnidadeService;
     }
 
-    // lista todas as movimentações de estoque, ordenadas da mais recente para a mais antiga
+    // lista o histórico global, exclusivamente para administradores
     @Transactional(readOnly = true)
-    public List<MovimentacaoEstoqueResponseDTO> listarTodas() {
+    public List<MovimentacaoEstoqueResponseDTO> listarTodas(
+            String emailUsuario) {
+
+        permissaoUnidadeService.validarAcessoAdministrativo(emailUsuario);
 
         return movimentacaoEstoqueRepository
                 .findAllByOrderByDataMovimentacaoDesc()
@@ -46,32 +53,49 @@ public class MovimentacaoEstoqueService {
                 .toList();
     }
 
-    // busca uma movimentação específica pelo seu identificador
+    // busca uma movimentação individual respeitando o acesso à unidade
     @Transactional(readOnly = true)
-    public MovimentacaoEstoqueResponseDTO buscarPorId(Long id) {
+    public MovimentacaoEstoqueResponseDTO buscarPorId(
+            Long id,
+            String emailUsuario) {
 
-        MovimentacaoEstoque movimentacao = movimentacaoEstoqueRepository
-                .findById(id)
-                .orElseThrow(() -> new NoSuchElementException(
-                        "Movimentação de estoque não encontrada: " + id
-                ));
+        MovimentacaoEstoque movimentacao =
+                movimentacaoEstoqueRepository.findById(id)
+                        .orElseThrow(() -> new NoSuchElementException(
+                                "Movimentação de estoque não encontrada: " + id
+                        ));
+
+        // identifica a unidade real à qual a movimentação pertence
+        Long unidadeId = movimentacao
+                .getProdutoUnidade()
+                .getUnidade()
+                .getId();
+
+        // valida a autorização antes de retornar os dados
+        permissaoUnidadeService.validarAcesso(emailUsuario, unidadeId);
 
         return MovimentacaoEstoqueResponseDTO.fromEntity(movimentacao);
     }
 
-    // consulta o histórico de movimentações de um produto associado a uma determinada unidade
+    // lista o histórico de um produto em uma unidade específica
     @Transactional(readOnly = true)
     public List<MovimentacaoEstoqueResponseDTO> listarPorProdutoUnidade(
-            Long produtoUnidadeId
-    ) {
+            Long produtoUnidadeId,
+            String emailUsuario) {
 
-        // verifica se a associação existe antes de consultar o histórico
-        if (!produtoUnidadeRepository.existsById(produtoUnidadeId)) {
-            throw new NoSuchElementException(
-                    "Associação de produto e unidade não encontrada: "
-                            + produtoUnidadeId
-            );
-        }
+        // recupera a associação para identificar sua unidade
+        ProdutoUnidade produtoUnidade =
+                produtoUnidadeRepository.findById(produtoUnidadeId)
+                        .orElseThrow(() -> new NoSuchElementException(
+                                "Associação de produto e unidade não encontrada: "
+                                        + produtoUnidadeId
+                        ));
+
+        // impede consultas ao estoque de unidades não autorizadas
+        permissaoUnidadeService.validarAcesso(
+                emailUsuario,
+                produtoUnidade.getUnidade().getId()
+        );
 
         return movimentacaoEstoqueRepository
                 .findByProdutoUnidadeIdOrderByDataMovimentacaoDesc(
@@ -82,11 +106,13 @@ public class MovimentacaoEstoqueService {
                 .toList();
     }
 
-    // consulta o histórico de movimentações de uma unidade
+    // lista as movimentações de uma unidade autorizada
     @Transactional(readOnly = true)
     public List<MovimentacaoEstoqueResponseDTO> listarPorUnidade(
-            Long unidadeId
-    ) {
+            Long unidadeId,
+            String emailUsuario) {
+
+        permissaoUnidadeService.validarAcesso(emailUsuario, unidadeId);
 
         return movimentacaoEstoqueRepository
                 .findByProdutoUnidadeUnidadeIdOrderByDataMovimentacaoDesc(
@@ -97,11 +123,13 @@ public class MovimentacaoEstoqueService {
                 .toList();
     }
 
-    // filtra as movimentações pelo tipo informado
+    // o filtro global por tipo é exclusivo de administradores
     @Transactional(readOnly = true)
     public List<MovimentacaoEstoqueResponseDTO> listarPorTipo(
-            TipoMovimentacaoEstoque tipo
-    ) {
+            TipoMovimentacaoEstoque tipo,
+            String emailUsuario) {
+
+        permissaoUnidadeService.validarAcessoAdministrativo(emailUsuario);
 
         return movimentacaoEstoqueRepository
                 .findByTipoOrderByDataMovimentacaoDesc(tipo)
@@ -110,70 +138,71 @@ public class MovimentacaoEstoqueService {
                 .toList();
     }
 
-    // registra uma movimentação e atualiza o saldo do estoque
-    // a anotação @Transactional garante que as alterações sejam realizadas dentro de uma única transação
-    // caso ocorra uma exceção não verificada, as alterações serão revertidas automaticamente
+    // registra a movimentação e atualiza o estoque na mesma transação
     @Transactional
     public MovimentacaoEstoqueResponseDTO registrar(
             MovimentacaoEstoqueRequestDTO dto,
-            String emailUsuario
-    ) {
+            String emailUsuario) {
 
-        // identifica o usuário responsável pela operação
-        // o e-mail deverá ser obtido da autenticação, e não informado diretamente no corpo da requisição
-        Usuario usuario = usuarioRepository
-                .findByEmail(emailUsuario)
+        // recupera o usuário responsável pelo registro
+        Usuario usuario = usuarioRepository.findByEmail(emailUsuario)
                 .orElseThrow(() -> new NoSuchElementException(
                         "Usuário responsável não encontrado."
                 ));
 
-        // validação adicional para proteger a camada de serviço
+        // impede movimentações com quantidades inválidas
         if (dto.quantidade() == null || dto.quantidade() <= 0) {
             throw new IllegalArgumentException(
                     "A quantidade deve ser maior que zero."
             );
         }
 
-        // o ajuste de estoque será implementado posteriormente, após a definição de suas regras específicas
+        // o ajuste manual de estoque ainda não faz parte do MVP
         if (dto.tipo() == TipoMovimentacaoEstoque.AJUSTE) {
             throw new IllegalArgumentException(
                     "Movimentações do tipo AJUSTE ainda não estão disponíveis."
             );
         }
 
-        // busca o produto da unidade com bloqueio pessimista
-        // isso evita alterações concorrentes no mesmo saldo
-        ProdutoUnidade produtoUnidade = produtoUnidadeRepository
-                .findByIdComBloqueio(dto.produtoUnidadeId())
-                .orElseThrow(() -> new NoSuchElementException(
-                        "Associação de produto e unidade não encontrada: "
-                                + dto.produtoUnidadeId()
-                ));
+        // bloqueia o registro de estoque durante a transação, evitando alterações concorrentes inconsistentes
+        ProdutoUnidade produtoUnidade =
+                produtoUnidadeRepository
+                        .findByIdComBloqueio(dto.produtoUnidadeId())
+                        .orElseThrow(() -> new NoSuchElementException(
+                                "Associação de produto e unidade não encontrada: "
+                                        + dto.produtoUnidadeId()
+                        ));
 
-        // impede movimentações em unidades inativas
-        if (!Boolean.TRUE.equals(produtoUnidade.getUnidade().getAtiva())) {
+        // somente administradores e gerentes autorizados podem registrar entradas e saídas de estoque
+        permissaoUnidadeService.validarMovimentacaoEstoque(
+                emailUsuario,
+                produtoUnidade.getUnidade().getId()
+        );
+
+        // preserva a regra de negócio que impede alterações no estoque de unidades inativas
+        if (!Boolean.TRUE.equals(
+                produtoUnidade.getUnidade().getAtiva())) {
+
             throw new IllegalArgumentException(
                     "Não é possível movimentar o estoque de uma unidade inativa."
             );
         }
 
-        // armazena o saldo existente antes da movimentação
+        // armazena o saldo anterior para compor o histórico
         int estoqueAnterior = produtoUnidade.getEstoque();
-
         int estoquePosterior;
 
-        // calcula o novo saldo conforme o tipo de movimentação
         switch (dto.tipo()) {
 
             case ENTRADA -> {
 
-                // Math.addExact protege contra estouro do limite de armazenamento de um Integer
+                // soma a quantidade verificando o limite do tipo Integer
                 try {
                     estoquePosterior = Math.addExact(
                             estoqueAnterior,
                             dto.quantidade()
                     );
-                } catch (ArithmeticException e) {
+                } catch (ArithmeticException excecao) {
                     throw new IllegalArgumentException(
                             "A movimentação excede o limite máximo de estoque."
                     );
@@ -182,7 +211,7 @@ public class MovimentacaoEstoqueService {
 
             case SAIDA -> {
 
-                // impede que o estoque fique negativo
+                // impede que uma retirada deixe o estoque negativo
                 if (dto.quantidade() > estoqueAnterior) {
                     throw new IllegalArgumentException(
                             "Estoque insuficiente para realizar a saída."
@@ -197,12 +226,11 @@ public class MovimentacaoEstoqueService {
             );
         }
 
-        // atualiza o saldo atual do produto na unidade
+        // atualiza e persiste o novo saldo
         produtoUnidade.setEstoque(estoquePosterior);
-
         produtoUnidadeRepository.save(produtoUnidade);
 
-        // cria o registro que será armazenado no histórico de movimentações de estoque
+        // cria o registro histórico da movimentação
         MovimentacaoEstoque movimentacao = new MovimentacaoEstoque();
 
         movimentacao.setProdutoUnidade(produtoUnidade);
@@ -213,13 +241,10 @@ public class MovimentacaoEstoqueService {
         movimentacao.setEstoquePosterior(estoquePosterior);
         movimentacao.setMotivo(dto.motivo());
 
-        // persiste o histórico da movimentação
+        // persiste o histórico dentro da mesma transação do estoque
         MovimentacaoEstoque movimentacaoSalva =
                 movimentacaoEstoqueRepository.save(movimentacao);
 
-        // converte a entidade salva em um DTO de resposta
-        return MovimentacaoEstoqueResponseDTO.fromEntity(
-                movimentacaoSalva
-        );
+        return MovimentacaoEstoqueResponseDTO.fromEntity(movimentacaoSalva);
     }
 }

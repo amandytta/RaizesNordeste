@@ -51,6 +51,12 @@ public class SecurityConfig {
                         // permite o cadastro publico de novos clientes
                         .requestMatchers(HttpMethod.POST, "/api/usuarios/cadastro").permitAll()
 
+                        // restringe as operações administrativas de usuários ao perfil ADMIN
+                        .requestMatchers(
+                                "/api/usuarios",
+                                "/api/usuarios/**"
+                        ).hasRole("ADMIN")
+
                         // permite consultas publicas de unidades, categorias, produtos e cardapios
                         .requestMatchers(HttpMethod.GET,
                                 "/api/unidades",
@@ -68,7 +74,7 @@ public class SecurityConfig {
                                 "/api/produtos-unidades/*"
                         ).hasRole("ADMIN")
 
-                        // somente administradores podem cadastrar unidades, categorias, produtos e associacoes
+                        // somente administradores podem cadastrar unidades, categorias, produtos e associações
                         .requestMatchers(HttpMethod.POST,
                                 "/api/unidades",
                                 "/api/categorias",
@@ -76,11 +82,31 @@ public class SecurityConfig {
                                 "/api/produtos-unidades"
                         ).hasRole("ADMIN")
 
-                        // protege todos os endpoints de movimentacao de estoque, restringindo o acesso ao perfil ADMIN
-                        .requestMatchers(
+                        // restringe o histórico global aos administradores
+                        .requestMatchers(HttpMethod.GET,
                                 "/api/movimentacoes-estoque",
-                                "/api/movimentacoes-estoque/**"
+                                "/api/movimentacoes-estoque/tipo"
                         ).hasRole("ADMIN")
+
+                        // permite consultas específicas aos funcionários autorizados
+                        // o serviço verifica o vínculo com a unidade solicitada
+                                .requestMatchers(HttpMethod.GET,
+                                        "/api/movimentacoes-estoque/*",
+                                        "/api/movimentacoes-estoque/produto-unidade/*",
+                                        "/api/movimentacoes-estoque/unidade/*"
+                                ).hasAnyRole("ADMIN", "GERENTE", "ATENDENTE")
+
+                        // permite entradas e saídas aos administradores e gerentes
+                        // o serviço verifica a autorização para a unidade correspondente
+                                .requestMatchers(HttpMethod.POST,
+                                        "/api/movimentacoes-estoque"
+                                ).hasAnyRole("ADMIN", "GERENTE")
+
+                        // bloqueia outras operações não previstas no módulo de estoque
+                                .requestMatchers(
+                                        "/api/movimentacoes-estoque",
+                                        "/api/movimentacoes-estoque/**"
+                                ).denyAll()
 
                         // exige autenticacao para as demais requisicoes
                         .anyRequest().authenticated()

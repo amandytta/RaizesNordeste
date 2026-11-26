@@ -43,6 +43,10 @@ class MovimentacaoEstoqueServiceTest {
     @Mock
     private UsuarioRepository usuarioRepository;
 
+    // simula o serviço responsável pelas validações de autorização
+    @Mock
+    private PermissaoUnidadeService permissaoUnidadeService;
+
     // injeta os repositórios simulados no serviço que será testado
     @InjectMocks
     private MovimentacaoEstoqueService movimentacaoEstoqueService;
@@ -396,7 +400,7 @@ class MovimentacaoEstoqueServiceTest {
 
         // executa a consulta de todas as movimentações
         List<MovimentacaoEstoqueResponseDTO> resposta =
-                movimentacaoEstoqueService.listarTodas();
+                movimentacaoEstoqueService.listarTodas("admin@raizes.local");
 
         // confirma que as duas movimentações foram retornadas
         assertEquals(2, resposta.size());
@@ -470,7 +474,7 @@ class MovimentacaoEstoqueServiceTest {
 
         // executa a busca da movimentação
         MovimentacaoEstoqueResponseDTO resposta =
-                movimentacaoEstoqueService.buscarPorId(5L);
+                movimentacaoEstoqueService.buscarPorId(5L, "admin@raizes.local");
 
         // verifica se a movimentação correta foi retornada
         assertNotNull(resposta);
@@ -557,9 +561,9 @@ class MovimentacaoEstoqueServiceTest {
         saida.setMotivo("Saida de mercadoria");
         saida.prePersist();
 
-        // simula a existência da associação entre produto e unidade
-        when(produtoUnidadeRepository.existsById(1L))
-                .thenReturn(true);
+        // simula a recuperação da associação entre produto e unidade
+        when(produtoUnidadeRepository.findById(1L))
+                .thenReturn(Optional.of(produtoUnidade));
 
         // simula a consulta das movimentações da associação
         when(movimentacaoEstoqueRepository
@@ -568,7 +572,7 @@ class MovimentacaoEstoqueServiceTest {
 
         // executa a consulta filtrada
         List<MovimentacaoEstoqueResponseDTO> resposta =
-                movimentacaoEstoqueService.listarPorProdutoUnidade(1L);
+                movimentacaoEstoqueService.listarPorProdutoUnidade(1L, "admin@raizes.local");
 
         // verifica a quantidade de movimentações retornadas
         assertEquals(2, resposta.size());
@@ -593,8 +597,8 @@ class MovimentacaoEstoqueServiceTest {
                 resposta.get(1).tipo());
         assertEquals(60, resposta.get(1).estoquePosterior());
 
-        // confirma que a existência da associação foi verificada
-        verify(produtoUnidadeRepository).existsById(1L);
+        // confirma que a associação foi consultada pelo ID correto
+        verify(produtoUnidadeRepository).findById(1L);
 
         // confirma que o método correto de consulta foi utilizado
         verify(movimentacaoEstoqueRepository)
@@ -678,7 +682,7 @@ class MovimentacaoEstoqueServiceTest {
 
         // executa a consulta filtrada pela unidade
         List<MovimentacaoEstoqueResponseDTO> resposta =
-                movimentacaoEstoqueService.listarPorUnidade(1L);
+                movimentacaoEstoqueService.listarPorUnidade(1L, "admin@raizes.local");
 
         // confirma a quantidade de movimentações retornadas
         assertEquals(2, resposta.size());
@@ -770,7 +774,8 @@ class MovimentacaoEstoqueServiceTest {
         // executa a consulta filtrada pelo tipo de movimentação
         List<MovimentacaoEstoqueResponseDTO> resposta =
                 movimentacaoEstoqueService.listarPorTipo(
-                        TipoMovimentacaoEstoque.ENTRADA
+                        TipoMovimentacaoEstoque.ENTRADA,
+                        "admin@raizes.local"
                 );
 
         // confirma a quantidade de movimentações retornadas
@@ -1350,7 +1355,8 @@ class MovimentacaoEstoqueServiceTest {
         NoSuchElementException excecao = assertThrows(
                 NoSuchElementException.class,
                 () -> movimentacaoEstoqueService.buscarPorId(
-                        movimentacaoId
+                        movimentacaoId,
+                        "admin@raizes.local"
                 )
         );
 
@@ -1382,14 +1388,15 @@ class MovimentacaoEstoqueServiceTest {
         Long produtoUnidadeId = 99999L;
 
         // simula a ausência da associação entre produto e unidade
-        when(produtoUnidadeRepository.existsById(produtoUnidadeId))
-                .thenReturn(false);
+        when(produtoUnidadeRepository.findById(produtoUnidadeId))
+                .thenReturn(Optional.empty());
 
         // executa a consulta e verifica se a exceção esperada é lançada
         NoSuchElementException excecao = assertThrows(
                 NoSuchElementException.class,
                 () -> movimentacaoEstoqueService.listarPorProdutoUnidade(
-                        produtoUnidadeId
+                        produtoUnidadeId,
+                        "admin@raizes.local"
                 )
         );
 
@@ -1399,9 +1406,9 @@ class MovimentacaoEstoqueServiceTest {
                 excecao.getMessage()
         );
 
-        // confirma que a existência da associação foi verificada
+        // confirma que a associação foi consultada pelo ID correto
         verify(produtoUnidadeRepository)
-                .existsById(produtoUnidadeId);
+                .findById(produtoUnidadeId);
 
         // garante que nenhuma alteração de estoque foi salva
         verify(produtoUnidadeRepository, never())
