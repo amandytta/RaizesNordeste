@@ -139,6 +139,51 @@ public class SecurityConfig {
                                         "/api/pedidos/*"
                                 ).hasAnyRole("ADMIN", "GERENTE", "ATENDENTE", "CLIENTE")
 
+                                // permite o processamento de pagamentos pelos perfis autorizados
+                                .requestMatchers(
+                                        HttpMethod.POST,
+                                        "/api/pedidos/*/pagamentos"
+                                ).hasAnyRole(
+                                        "ADMIN",
+                                        "GERENTE",
+                                        "ATENDENTE",
+                                        "CLIENTE"
+                                )
+
+                                // permite a consulta do histórico de pagamentos de um pedido
+                                .requestMatchers(
+                                        HttpMethod.GET,
+                                        "/api/pedidos/*/pagamentos"
+                                ).hasAnyRole(
+                                        "ADMIN",
+                                        "GERENTE",
+                                        "ATENDENTE",
+                                        "CLIENTE"
+                                )
+
+                                // permite a consulta de uma tentativa específica de pagamento
+                                .requestMatchers(
+                                        HttpMethod.GET,
+                                        "/api/pedidos/*/pagamentos/*"
+                                ).hasAnyRole(
+                                        "ADMIN",
+                                        "GERENTE",
+                                        "ATENDENTE",
+                                        "CLIENTE"
+                                )
+
+                                // permite a atualização operacional pelos funcionários autorizados
+                                .requestMatchers(
+                                        HttpMethod.PATCH,
+                                        "/api/pedidos/*/status"
+                                ).hasAnyRole("ADMIN", "GERENTE", "ATENDENTE")
+
+                                // permite o cancelamento de pedidos pelos perfis autorizados
+                                .requestMatchers(
+                                        HttpMethod.PATCH,
+                                        "/api/pedidos/*/cancelamento"
+                                ).hasAnyRole("ADMIN", "GERENTE", "ATENDENTE", "CLIENTE")
+
                                 // bloqueia operações de pedidos que ainda não foram previstas
                                 .requestMatchers(
                                         "/api/pedidos",

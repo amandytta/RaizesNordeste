@@ -4,6 +4,7 @@ import br.com.raizesnordeste.raizesnordeste.dto.ItemPedidoRequestDTO;
 import br.com.raizesnordeste.raizesnordeste.dto.ItemPedidoResponseDTO;
 import br.com.raizesnordeste.raizesnordeste.dto.PedidoRequestDTO;
 import br.com.raizesnordeste.raizesnordeste.dto.PedidoResponseDTO;
+import br.com.raizesnordeste.raizesnordeste.dto.PedidoStatusRequestDTO;
 import br.com.raizesnordeste.raizesnordeste.entity.*;
 import br.com.raizesnordeste.raizesnordeste.enums.CanalPedido;
 import br.com.raizesnordeste.raizesnordeste.enums.StatusPedido;
@@ -340,6 +341,152 @@ public class PedidoService {
         }
 
         // retorna os dados do pedido autorizado
+        return converterParaResponseDTO(pedido);
+    }
+
+    // atualiza o status operacional de um pedido
+    @Transactional
+    public PedidoResponseDTO atualizarStatus(
+            Long pedidoId,
+            PedidoStatusRequestDTO dto,
+            String emailUsuario
+    ) {
+
+        // recupera o usuário autenticado e identifica seu perfil
+        Usuario usuario = buscarUsuarioAtivo(emailUsuario);
+        String perfil = identificarPerfil(usuario);
+
+        // impede que clientes alterem o fluxo operacional
+        if ("CLIENTE".equals(perfil)) {
+
+            throw new AccessDeniedException(
+                    "O cliente não pode alterar o status operacional do pedido."
+            );
+        }
+
+        // recupera o pedido com bloqueio exclusivo para atualização
+        Pedido pedido = pedidoRepository.findByIdComBloqueio(pedidoId)
+                .orElseThrow(() -> new NoSuchElementException(
+                        "Pedido não encontrado."
+                ));
+
+        // valida a autorização do funcionário sobre a unidade
+        permissaoUnidadeService.validarAcesso(
+                emailUsuario,
+                pedido.getUnidade().getId()
+        );
+
+        // recupera o novo status solicitado
+        StatusPedido novoStatus = dto.status();
+
+        // valida se a transição solicitada é permitida
+        validarTransicaoStatus(
+                pedido.getStatus(),
+                novoStatus
+        );
+        // atualiza o status do pedido
+        pedido.setStatus(novoStatus);
+
+        // sincroniza as alterações com o banco de dados
+        // garante a atualização da data antes de montar a resposta
+        pedidoRepository.flush();
+
+        // retorna os dados atualizados do pedido
+        return converterParaResponseDTO(pedido);
+    }
+
+    // valida as transições permitidas no fluxo operacional
+    private void validarTransicaoStatus(
+            StatusPedido statusAtual,
+            StatusPedido novoStatus
+    ) {
+
+        // identifica se a transição respeita a sequência operacional
+        boolean transicaoPermitida = switch (statusAtual) {
+
+            // permite iniciar o preparo de um pedido recebido
+            case RECEBIDO ->
+                    novoStatus == StatusPedido.EM_PREPARO;
+
+            // permite finalizar o preparo do pedido
+            case EM_PREPARO ->
+                    novoStatus == StatusPedido.PRONTO;
+
+            // permite concluir um pedido que já está pronto
+            case PRONTO ->
+                    novoStatus == StatusPedido.CONCLUIDO;
+
+            // impede alterações operacionais nos demais estados
+            case AGUARDANDO_PAGAMENTO, CONCLUIDO, CANCELADO ->
+                    false;
+        };
+
+        // rejeita transições que não respeitam o fluxo definido
+        if (!transicaoPermitida) {
+
+            throw new IllegalArgumentException(
+                    "Transição de status não permitida: "
+                            + statusAtual
+                            + " -> "
+                            + novoStatus
+            );
+        }
+    }
+
+    // cancela um pedido que ainda não possui pagamento aprovado
+    @Transactional
+    public PedidoResponseDTO cancelar(
+            Long pedidoId,
+            String emailUsuario
+    ) {
+
+        // recupera o usuário autenticado e identifica seu perfil
+        Usuario usuario = buscarUsuarioAtivo(emailUsuario);
+        String perfil = identificarPerfil(usuario);
+
+        // bloqueia o pedido para impedir operações concorrentes
+        Pedido pedido = pedidoRepository.findByIdComBloqueio(pedidoId)
+                .orElseThrow(() -> new NoSuchElementException(
+                        "Pedido não encontrado."
+                ));
+
+        // clientes podem cancelar somente seus próprios pedidos
+        if ("CLIENTE".equals(perfil)) {
+
+            if (pedido.getUsuario() == null
+                    || !pedido.getUsuario().getId()
+                    .equals(usuario.getId())) {
+
+                throw new NoSuchElementException(
+                        "Pedido não encontrado."
+                );
+            }
+
+        } else {
+
+            // funcionários devem possuir autorização sobre a unidade
+            permissaoUnidadeService.validarAcesso(
+                    emailUsuario,
+                    pedido.getUnidade().getId()
+            );
+        }
+
+        // permite cancelar somente pedidos que aguardam pagamento
+        if (pedido.getStatus()
+                != StatusPedido.AGUARDANDO_PAGAMENTO) {
+
+            throw new IllegalArgumentException(
+                    "Somente pedidos que aguardam pagamento podem ser cancelados."
+            );
+        }
+
+        // altera o status sem excluir o histórico do pedido
+        pedido.setStatus(StatusPedido.CANCELADO);
+
+        // sincroniza as alterações com o banco de dados
+        pedidoRepository.flush();
+
+        // retorna os dados do pedido cancelado
         return converterParaResponseDTO(pedido);
     }
 

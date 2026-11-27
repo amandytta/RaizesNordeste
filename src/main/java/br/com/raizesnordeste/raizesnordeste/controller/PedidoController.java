@@ -2,6 +2,7 @@ package br.com.raizesnordeste.raizesnordeste.controller;
 
 import br.com.raizesnordeste.raizesnordeste.dto.PedidoRequestDTO;
 import br.com.raizesnordeste.raizesnordeste.dto.PedidoResponseDTO;
+import br.com.raizesnordeste.raizesnordeste.dto.PedidoStatusRequestDTO;
 import br.com.raizesnordeste.raizesnordeste.enums.CanalPedido;
 import br.com.raizesnordeste.raizesnordeste.service.PedidoService;
 
@@ -117,5 +118,47 @@ public class PedidoController {
                         canalPedido,
                         authentication.getName()
                 ));
+    }
+
+    // atualiza o status operacional de um pedido
+    @PatchMapping("/{id}/status")
+    public ResponseEntity<PedidoResponseDTO> atualizarStatus(
+            @PathVariable Long id,
+            @Valid @RequestBody PedidoStatusRequestDTO dto,
+            Authentication authentication
+    ) {
+
+        // solicita a atualização do status ao serviço responsável
+        PedidoResponseDTO pedido =
+                pedidoService.atualizarStatus(
+                        id,
+                        dto,
+                        authentication.getName()
+                );
+
+        // retorna os dados atualizados sem armazenamento em cache
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(pedido);
+    }
+
+    // cancela um pedido que ainda aguarda pagamento
+    @PatchMapping("/{id}/cancelamento")
+    public ResponseEntity<PedidoResponseDTO> cancelar(
+            @PathVariable Long id,
+            Authentication authentication
+    ) {
+
+        // solicita o cancelamento ao serviço responsável
+        PedidoResponseDTO pedido =
+                pedidoService.cancelar(
+                        id,
+                        authentication.getName()
+                );
+
+        // retorna os dados do pedido cancelado
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(pedido);
     }
 }

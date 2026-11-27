@@ -20,6 +20,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.Executors;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import org.springframework.test.web.servlet.ResultActions;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -593,6 +597,266 @@ class PedidoIntegrationTest {
         assertEquals(1, contarPedidos(unidadeB));
     }
 
+    // reúne os dados de um pedido fictício para os cenários de pagamento
+    private record CenarioPagamento(String token, Long unidade, Long produto, Long pedido) {}
+
+    // prepara um pedido ainda não pago, com duas unidades solicitadas
+    private CenarioPagamento prepararPagamento() throws Exception {
+        String token = autenticarUsuario(criarUsuarioTeste("CLIENTE"));
+        Long unidade = criarUnidadeTeste();
+        Long produto = criarProdutoUnidadeTeste(unidade, "15.00", 50);
+        Long pedido = cadastrarPedidoTeste(token, unidade, "APP", produto, 2);
+        return new CenarioPagamento(token, unidade, produto, pedido);
+    }
+
+    // envia uma tentativa de pagamento pela API autenticada
+    private ResultActions pagar(String token, Long pedido, String resultado) throws Exception {
+        return mockMvc.perform(post("/api/pedidos/{id}/pagamentos", pedido)
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"metodo":"PIX","resultadoSimulado":"%s"}
+                        """.formatted(resultado)));
+    }
+
+    // envia uma transição operacional pela API
+    private ResultActions alterarStatus(String token, Long pedido, String novoStatus) throws Exception {
+        return mockMvc.perform(patch("/api/pedidos/{id}/status", pedido)
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"status":"%s"}
+                        """.formatted(novoStatus)));
+    }
+
+    // solicita o cancelamento pela API
+    private ResultActions cancelarPedido(String token, Long pedido) throws Exception {
+        return mockMvc.perform(patch("/api/pedidos/{id}/cancelamento", pedido)
+                .header("Authorization", "Bearer " + token));
+    }
+
+    // verifica diretamente os efeitos persistidos da operação
+    private void conferirPagamento(CenarioPagamento c, String estado, int saldo,
+                                   int pagamentos, int movimentos) {
+        assertEquals(estado, jdbcTemplate.queryForObject(
+                "SELECT status FROM pedido WHERE id = ?", String.class, c.pedido()));
+        assertEquals(saldo, consultarEstoque(c.produto()));
+        assertEquals(pagamentos, jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM pagamento WHERE pedido_id = ?", Integer.class, c.pedido()));
+        assertEquals(movimentos, jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM movimentacao_estoque WHERE pedido_id = ?", Integer.class, c.pedido()));
+    }
+
+    // teste 13: confirma aprovação, valor e movimentação automática
+    @Test
+    void deveAprovarPagamentoEBaixarEstoque() throws Exception {
+        var c = prepararPagamento();
+        pagar(c.token(), c.pedido(), "APROVADO")
+                .andExpect(status().isCreated())
+                .andExpect(header().string("Cache-Control", "no-store"))
+                .andExpect(jsonPath("$.status").value("APROVADO"))
+                .andExpect(jsonPath("$.statusPedido").value("RECEBIDO"))
+                .andExpect(jsonPath("$.valor").value(30.00));
+        conferirPagamento(c, "RECEBIDO", 48, 1, 1);
+        assertEquals(1, jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM movimentacao_estoque
+                WHERE pedido_id = ? AND produto_unidade_id = ? AND tipo = 'SAIDA'
+                AND quantidade = 2 AND estoque_anterior = 50 AND estoque_posterior = 48
+                AND usuario_id = (SELECT usuario_id FROM pedido WHERE id = ?)
+                """, Integer.class, c.pedido(), c.produto(), c.pedido()));
+    }
+
+    // teste 14: registra recusa sem alterar estoque ou pedido
+    @Test
+    void deveRegistrarPagamentoRecusado() throws Exception {
+        var c = prepararPagamento();
+        pagar(c.token(), c.pedido(), "RECUSADO").andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("RECUSADO"));
+        conferirPagamento(c, "AGUARDANDO_PAGAMENTO", 50, 1, 0);
+    }
+
+    // teste 15: permite nova tentativa após recusa
+    @Test
+    void devePermitirNovaTentativa() throws Exception {
+        var c = prepararPagamento();
+        pagar(c.token(), c.pedido(), "RECUSADO").andExpect(status().isCreated());
+        pagar(c.token(), c.pedido(), "APROVADO").andExpect(status().isCreated());
+        conferirPagamento(c, "RECEBIDO", 48, 2, 1);
+    }
+
+    // teste 16: impede segunda aprovação
+    @Test
+    void deveImpedirPagamentoDuplicado() throws Exception {
+        var c = prepararPagamento();
+        pagar(c.token(), c.pedido(), "APROVADO").andExpect(status().isCreated());
+        pagar(c.token(), c.pedido(), "APROVADO").andExpect(status().isConflict());
+        conferirPagamento(c, "RECEBIDO", 48, 1, 1);
+    }
+
+    // teste 17: revalida estoque após a criação do pedido
+    @Test
+    void deveRevalidarEstoqueNoPagamento() throws Exception {
+        var c = prepararPagamento();
+        jdbcTemplate.update("UPDATE produto_unidade SET estoque = 1 WHERE id = ?", c.produto());
+        pagar(c.token(), c.pedido(), "APROVADO").andExpect(status().isConflict());
+        conferirPagamento(c, "AGUARDANDO_PAGAMENTO", 1, 0, 0);
+    }
+
+    // teste 18: desfaz a baixa do primeiro item se o segundo falhar
+    @Test
+    void deveDesfazerBaixaParcial() throws Exception {
+        String token = autenticarUsuario(criarUsuarioTeste("CLIENTE"));
+        Long unidade = criarUnidadeTeste();
+        Long a = criarProdutoUnidadeTeste(unidade, "15.00", 50);
+        Long b = criarProdutoUnidadeTeste(unidade, "12.00", 30);
+        assertTrue(a < b);
+        String resposta = mockMvc.perform(post("/api/pedidos")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(criarJsonPedido(unidade, "APP", criarJsonItem(a, 2) + "," + criarJsonItem(b, 3))))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        Number id = JsonPath.read(resposta, "$.id");
+        Long pedido = id.longValue();
+        jdbcTemplate.update("UPDATE produto_unidade SET estoque = 1 WHERE id = ?", b);
+        pagar(token, pedido, "APROVADO").andExpect(status().isConflict());
+        conferirPagamento(new CenarioPagamento(token, unidade, a, pedido), "AGUARDANDO_PAGAMENTO", 50, 0, 0);
+        assertEquals(1, consultarEstoque(b));
+    }
+
+    // teste 19: consulta histórico e recurso individual pelo endereço retornado
+    @Test
+    void deveConsultarHistoricoDePagamentos() throws Exception {
+        var c = prepararPagamento();
+        pagar(c.token(), c.pedido(), "RECUSADO").andExpect(status().isCreated());
+        String local = pagar(c.token(), c.pedido(), "APROVADO").andExpect(status().isCreated())
+                .andReturn().getResponse().getHeader("Location");
+        assertNotNull(local);
+        mockMvc.perform(get("/api/pedidos/{id}/pagamentos", c.pedido())
+                        .header("Authorization", "Bearer " + c.token()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].status").value("APROVADO"))
+                .andExpect(jsonPath("$[1].status").value("RECUSADO"));
+        mockMvc.perform(get(local).header("Authorization", "Bearer " + c.token()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("APROVADO"));
+    }
+
+    // teste 20: protege pedidos de outros clientes
+    @Test
+    void deveNegarPagamentoDeOutroCliente() throws Exception {
+        var c = prepararPagamento();
+        String outro = autenticarUsuario(criarUsuarioTeste("CLIENTE"));
+        pagar(outro, c.pedido(), "APROVADO").andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/pedidos/{id}/pagamentos", c.pedido())
+                .header("Authorization", "Bearer " + outro)).andExpect(status().isNotFound());
+        cancelarPedido(outro, c.pedido()).andExpect(status().isNotFound());
+        conferirPagamento(c, "AGUARDANDO_PAGAMENTO", 50, 0, 0);
+    }
+
+    // teste 21: exige vínculo ativo do funcionário com a unidade
+    @Test
+    void deveNegarPagamentoSemVinculo() throws Exception {
+        var c = prepararPagamento();
+        String token = autenticarUsuario(criarUsuarioTeste("ATENDENTE"));
+        pagar(token, c.pedido(), "APROVADO").andExpect(status().isForbidden());
+        conferirPagamento(c, "AGUARDANDO_PAGAMENTO", 50, 0, 0);
+    }
+
+    // teste 22: percorre o fluxo operacional com funcionário autorizado
+    @Test
+    void deveConcluirFluxoOperacional() throws Exception {
+        var c = prepararPagamento();
+        String email = criarUsuarioTeste("ATENDENTE");
+        vincularFuncionarioTeste(email, c.unidade());
+        String token = autenticarUsuario(email);
+        pagar(token, c.pedido(), "APROVADO").andExpect(status().isCreated());
+        for (String estado : List.of("EM_PREPARO", "PRONTO", "CONCLUIDO")) {
+            alterarStatus(token, c.pedido(), estado).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.status").value(estado));
+        }
+        conferirPagamento(c, "CONCLUIDO", 48, 1, 1);
+    }
+
+    // teste 23: impede pular etapas ou ignorar o pagamento
+    @Test
+    void deveRejeitarTransicaoInvalida() throws Exception {
+        var c = prepararPagamento();
+        String admin = autenticarUsuario(criarUsuarioTeste("ADMIN"));
+        alterarStatus(admin, c.pedido(), "RECEBIDO").andExpect(status().isConflict());
+        pagar(c.token(), c.pedido(), "APROVADO").andExpect(status().isCreated());
+        alterarStatus(admin, c.pedido(), "CONCLUIDO").andExpect(status().isConflict());
+        conferirPagamento(c, "RECEBIDO", 48, 1, 1);
+    }
+
+    // teste 24: impede cliente de alterar o fluxo operacional
+    @Test
+    void deveNegarAlteracaoOperacionalAoCliente() throws Exception {
+        var c = prepararPagamento();
+        pagar(c.token(), c.pedido(), "APROVADO").andExpect(status().isCreated());
+        alterarStatus(c.token(), c.pedido(), "EM_PREPARO").andExpect(status().isForbidden());
+        conferirPagamento(c, "RECEBIDO", 48, 1, 1);
+    }
+
+    // teste 25: cancela pedido não pago preservando histórico de recusa
+    @Test
+    void deveCancelarPedidoNaoPago() throws Exception {
+        var c = prepararPagamento();
+        pagar(c.token(), c.pedido(), "RECUSADO").andExpect(status().isCreated());
+        cancelarPedido(c.token(), c.pedido()).andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CANCELADO"));
+        conferirPagamento(c, "CANCELADO", 50, 1, 0);
+    }
+
+    // teste 26: impede pagamento após cancelamento
+    @Test
+    void deveImpedirPagamentoDePedidoCancelado() throws Exception {
+        var c = prepararPagamento();
+        cancelarPedido(c.token(), c.pedido()).andExpect(status().isOk());
+        pagar(c.token(), c.pedido(), "APROVADO").andExpect(status().isConflict());
+        conferirPagamento(c, "CANCELADO", 50, 0, 0);
+    }
+
+    // teste 27: impede cancelamento de pedido pago sem estorno
+    @Test
+    void deveImpedirCancelamentoDePedidoPago() throws Exception {
+        var c = prepararPagamento();
+        pagar(c.token(), c.pedido(), "APROVADO").andExpect(status().isCreated());
+        cancelarPedido(c.token(), c.pedido()).andExpect(status().isConflict());
+        conferirPagamento(c, "RECEBIDO", 48, 1, 1);
+    }
+
+    // teste 28: dispara duas tentativas concorrentes para o mesmo pedido
+    @Test
+    void deveImpedirAprovacoesConcorrentes() throws Exception {
+        var c = prepararPagamento();
+        var executor = Executors.newFixedThreadPool(2);
+        var prontas = new CountDownLatch(2);
+        var inicio = new CountDownLatch(1);
+        try {
+            // sincroniza o início das duas requisições independentes
+            java.util.concurrent.Callable<Integer> tentativa = () -> {
+                prontas.countDown();
+                if (!inicio.await(10, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Tempo de espera excedido.");
+                }
+                return pagar(c.token(), c.pedido(), "APROVADO")
+                        .andReturn().getResponse().getStatus();
+            };
+            var primeira = executor.submit(tentativa);
+            var segunda = executor.submit(tentativa);
+            assertTrue(prontas.await(10, TimeUnit.SECONDS));
+            inicio.countDown();
+            int a = primeira.get(60, TimeUnit.SECONDS);
+            int b = segunda.get(60, TimeUnit.SECONDS);
+            assertEquals(List.of(201, 409), java.util.stream.Stream.of(a, b).sorted().toList());
+            conferirPagamento(c, "RECEBIDO", 48, 1, 1);
+        } finally {
+            // libera as tarefas e encerra o executor antes da limpeza
+            inicio.countDown();
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(60, TimeUnit.SECONDS));
+        }
+    }
+
     // cria um usuário fictício com o perfil solicitado
     private String criarUsuarioTeste(String perfil) {
 
@@ -910,6 +1174,14 @@ class PedidoIntegrationTest {
                     """,
                     cnpj
             );
+
+            // remove as tentativas de pagamento antes dos pedidos
+            jdbcTemplate.update("""
+                    DELETE pg FROM pagamento pg
+                    INNER JOIN pedido p ON p.id = pg.pedido_id
+                    INNER JOIN unidade u ON u.id = p.unidade_id
+                    WHERE u.cnpj = ?
+                    """, cnpj);
 
             // remove os itens antes de excluir seus pedidos
             jdbcTemplate.update(
