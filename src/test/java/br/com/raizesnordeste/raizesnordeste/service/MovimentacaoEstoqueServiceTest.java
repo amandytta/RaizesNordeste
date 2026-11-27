@@ -47,6 +47,10 @@ class MovimentacaoEstoqueServiceTest {
     @Mock
     private PermissaoUnidadeService permissaoUnidadeService;
 
+    // simula o serviço responsável pelo registro dos eventos de auditoria
+    @Mock
+    private AuditoriaService auditoriaService;
+
     // injeta os repositórios simulados no serviço que será testado
     @InjectMocks
     private MovimentacaoEstoqueService movimentacaoEstoqueService;

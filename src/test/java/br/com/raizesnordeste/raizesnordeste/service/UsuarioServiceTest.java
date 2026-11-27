@@ -10,6 +10,10 @@ import br.com.raizesnordeste.raizesnordeste.entity.Perfil;
 import br.com.raizesnordeste.raizesnordeste.exception.DadosInvalidosException;
 
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.Test;
 
@@ -52,15 +56,42 @@ class UsuarioServiceTest {
     private UsuarioService usuarioService;
 
     // prepara uma nova instância do Service antes de cada teste
+    @Mock
+    private AuditoriaService auditoriaService;
+
     @BeforeEach
     void setUp() {
 
         usuarioService = new UsuarioService(
                 usuarioRepository,
                 perfilRepository,
-                passwordEncoder
+                passwordEncoder,
+                auditoriaService
         );
     }
+
+    // simula o administrador responsável apenas nos cenários administrativos bem-sucedidos
+    private void autenticarAdministrador() {
+        Usuario administrador = new Usuario();
+        ReflectionTestUtils.setField(administrador, "id", 99L);
+        administrador.setEmail("admin.teste@raizes.local");
+        administrador.setAtivo(true);
+        Perfil perfil = new Perfil();
+        perfil.setNome("ADMIN");
+        administrador.setPerfis(Set.of(perfil));
+        when(usuarioRepository.findByEmail(administrador.getEmail()))
+                .thenReturn(Optional.of(administrador));
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(administrador.getEmail(), null,
+                        List.of(new SimpleGrantedAuthority("ROLE_ADMIN"))));
+    }
+
+    // evita que a autenticação simulada seja reutilizada por outro teste
+    @AfterEach
+    void limparAutenticacao() {
+        SecurityContextHolder.clearContext();
+    }
+
 
     // verifica se um cliente pode ser cadastrado com dados validos
     @Test
@@ -91,7 +122,12 @@ class UsuarioServiceTest {
 
         // simula a persistencia retornando o usuario recebido
         when(usuarioRepository.save(any(Usuario.class)))
-                .thenAnswer(invocation -> invocation.getArgument(0));
+                .thenAnswer(invocation -> {
+                    Usuario salvo = invocation.getArgument(0);
+                    // simula o identificador atribuído pelo banco de dados
+                    ReflectionTestUtils.setField(salvo, "id", 1L);
+                    return salvo;
+                });
 
         // act: executa o método real do Service
         UsuarioResponseDTO resposta = usuarioService.cadastrarCliente(dto);
@@ -139,7 +175,12 @@ class UsuarioServiceTest {
 
         // simula a persistencia do usuario
         when(usuarioRepository.save(any(Usuario.class)))
-                .thenAnswer(invocation -> invocation.getArgument(0));
+                .thenAnswer(invocation -> {
+                    Usuario salvo = invocation.getArgument(0);
+                    // simula o identificador atribuído pelo banco de dados
+                    ReflectionTestUtils.setField(salvo, "id", 1L);
+                    return salvo;
+                });
 
         // act: executa o cadastro do cliente
         UsuarioResponseDTO resposta = usuarioService.cadastrarCliente(dto);
@@ -362,7 +403,12 @@ class UsuarioServiceTest {
 
         // simula a persistencia do usuario
         when(usuarioRepository.save(any(Usuario.class)))
-                .thenAnswer(invocation -> invocation.getArgument(0));
+                .thenAnswer(invocation -> {
+                    Usuario salvo = invocation.getArgument(0);
+                    // simula o identificador atribuído pelo banco de dados
+                    ReflectionTestUtils.setField(salvo, "id", 1L);
+                    return salvo;
+                });
 
         // act: executa o cadastro e garante que nenhuma exceção seja lançada
         UsuarioResponseDTO resposta = assertDoesNotThrow(
@@ -459,7 +505,12 @@ class UsuarioServiceTest {
 
         // simula a persistencia do usuario
         when(usuarioRepository.save(any(Usuario.class)))
-                .thenAnswer(invocation -> invocation.getArgument(0));
+                .thenAnswer(invocation -> {
+                    Usuario salvo = invocation.getArgument(0);
+                    // simula o identificador atribuído pelo banco de dados
+                    ReflectionTestUtils.setField(salvo, "id", 1L);
+                    return salvo;
+                });
 
         // act: executa o cadastro do client
         usuarioService.cadastrarCliente(dto);
@@ -513,7 +564,12 @@ class UsuarioServiceTest {
 
         // simula a persistência do usuario
         when(usuarioRepository.save(any(Usuario.class)))
-                .thenAnswer(invocation -> invocation.getArgument(0));
+                .thenAnswer(invocation -> {
+                    Usuario salvo = invocation.getArgument(0);
+                    // simula o identificador atribuído pelo banco de dados
+                    ReflectionTestUtils.setField(salvo, "id", 1L);
+                    return salvo;
+                });
 
         // act: executa o cadastro do cliente
         UsuarioResponseDTO resposta = usuarioService.cadastrarCliente(dto);
@@ -611,6 +667,8 @@ class UsuarioServiceTest {
     @Test
     void deveCadastrarAtendenteComSucesso() {
 
+        autenticarAdministrador();
+
         // prepara os dados de cadastro do funcionário
         FuncionarioCadastroRequestDTO dto =
                 new FuncionarioCadastroRequestDTO(
@@ -635,7 +693,12 @@ class UsuarioServiceTest {
                 .thenReturn("hash-simulado");
 
         when(usuarioRepository.save(any(Usuario.class)))
-                .thenAnswer(invocation -> invocation.getArgument(0));
+                .thenAnswer(invocation -> {
+                    Usuario salvo = invocation.getArgument(0);
+                    // simula o identificador atribuído pelo banco de dados
+                    ReflectionTestUtils.setField(salvo, "id", 1L);
+                    return salvo;
+                });
 
         // executa o cadastro administrativo
         UsuarioResponseDTO resposta =
@@ -662,6 +725,8 @@ class UsuarioServiceTest {
     @Test
     void deveCadastrarGerenteComSucesso() {
 
+        autenticarAdministrador();
+
         // prepara os dados do gerente
         FuncionarioCadastroRequestDTO dto =
                 new FuncionarioCadastroRequestDTO(
@@ -686,7 +751,12 @@ class UsuarioServiceTest {
                 .thenReturn("hash-simulado");
 
         when(usuarioRepository.save(any(Usuario.class)))
-                .thenAnswer(invocation -> invocation.getArgument(0));
+                .thenAnswer(invocation -> {
+                    Usuario salvo = invocation.getArgument(0);
+                    // simula o identificador atribuído pelo banco de dados
+                    ReflectionTestUtils.setField(salvo, "id", 1L);
+                    return salvo;
+                });
 
         // executa o cadastro administrativo
         UsuarioResponseDTO resposta =

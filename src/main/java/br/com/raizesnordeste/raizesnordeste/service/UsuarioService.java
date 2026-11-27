@@ -12,6 +12,9 @@ import br.com.raizesnordeste.raizesnordeste.exception.DadosInvalidosException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.stereotype.Service;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.access.AccessDeniedException;
 
 import java.nio.charset.StandardCharsets;
 
@@ -20,6 +23,7 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 
 
@@ -28,6 +32,9 @@ import java.util.NoSuchElementException;
 public class UsuarioService {
 
     // responsavel pelas consultas e persistencia dos usuarios
+    // serviço responsável pela auditoria transacional
+    private final AuditoriaService auditoriaService;
+
     private final UsuarioRepository usuarioRepository;
 
     // responsavel pela consulta dos perfis de acesso
@@ -40,8 +47,10 @@ public class UsuarioService {
     public UsuarioService(
             UsuarioRepository usuarioRepository,
             PerfilRepository perfilRepository,
-            PasswordEncoder passwordEncoder
+            PasswordEncoder passwordEncoder,
+            AuditoriaService auditoriaService
     ) {
+        this.auditoriaService = auditoriaService;
         this.usuarioRepository = usuarioRepository;
         this.perfilRepository = perfilRepository;
         this.passwordEncoder = passwordEncoder;
@@ -109,6 +118,13 @@ public class UsuarioService {
 
         // persiste o usuario e seu relacionamento com o perfil
         Usuario usuarioSalvo = usuarioRepository.save(usuario);
+
+
+        // registra o evento de auditoria na mesma transação
+        auditoriaService.registrar(
+                usuarioSalvo, "CADASTRAR_CLIENTE", "USUARIO", usuarioSalvo.getId(),
+                Map.of("perfil", "CLIENTE")
+        );
 
         // extrai somente os nomes dos perfis para a resposta
         Set<String> perfis = usuarioSalvo.getPerfis()
@@ -224,7 +240,27 @@ public class UsuarioService {
         // persiste o funcionário no banco de dados
         Usuario usuarioSalvo = usuarioRepository.save(usuario);
 
+
+        // registra o evento de auditoria na mesma transação
+        auditoriaService.registrar(
+                recuperarAdministradorAuditoria(), "CADASTRAR_FUNCIONARIO", "USUARIO", usuarioSalvo.getId(),
+                Map.of("perfil", dto.perfil())
+        );
+
         // retorna os dados do funcionário cadastrado
         return converterParaResponseDTO(usuarioSalvo);
+    }
+
+    // identifica o administrador autenticado sem utilizar dados do corpo da requisição
+    private Usuario recuperarAdministradorAuditoria() {
+        Authentication autenticacao = SecurityContextHolder.getContext().getAuthentication();
+        if (autenticacao == null || !autenticacao.isAuthenticated()
+                || autenticacao.getAuthorities().stream().noneMatch(
+                        autoridade -> "ROLE_ADMIN".equals(autoridade.getAuthority()))) {
+            throw new AccessDeniedException("Acesso administrativo obrigatório.");
+        }
+        return usuarioRepository.findByEmail(autenticacao.getName())
+                .filter(usuario -> Boolean.TRUE.equals(usuario.getAtivo()))
+                .orElseThrow(() -> new AccessDeniedException("Administrador não encontrado ou inativo."));
     }
 }

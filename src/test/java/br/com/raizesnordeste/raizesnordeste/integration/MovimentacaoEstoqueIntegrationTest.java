@@ -270,6 +270,8 @@ class MovimentacaoEstoqueIntegrationTest {
 
         // remove o perfil associado antes de excluir o usuário fictício
         if (usuarioId != null) {
+            // remove a auditoria do usuário antes de excluí-lo
+            jdbcTemplate.update("DELETE FROM auditoria WHERE usuario_id = ?", usuarioId);
             // Respeita a chave estrangeira da tabela usuario_perfil.
             jdbcTemplate.update(
                     "DELETE FROM usuario_perfil WHERE usuario_id = ?",

@@ -12,9 +12,13 @@ import br.com.raizesnordeste.raizesnordeste.repository.UsuarioRepository;
 import br.com.raizesnordeste.raizesnordeste.repository.UsuarioUnidadeRepository;
 
 import org.springframework.stereotype.Service;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -24,6 +28,9 @@ import java.util.stream.Collectors;
 public class UsuarioUnidadeService {
 
     // repository responsável pelos vínculos
+    // serviço responsável pela auditoria transacional
+    private final AuditoriaService auditoriaService;
+
     private final UsuarioUnidadeRepository usuarioUnidadeRepository;
 
     // repository responsável pelos usuários
@@ -36,8 +43,10 @@ public class UsuarioUnidadeService {
     public UsuarioUnidadeService(
             UsuarioUnidadeRepository usuarioUnidadeRepository,
             UsuarioRepository usuarioRepository,
-            UnidadeRepository unidadeRepository) {
+            UnidadeRepository unidadeRepository,
+            AuditoriaService auditoriaService) {
 
+        this.auditoriaService = auditoriaService;
         this.usuarioUnidadeRepository = usuarioUnidadeRepository;
         this.usuarioRepository = usuarioRepository;
         this.unidadeRepository = unidadeRepository;
@@ -140,6 +149,13 @@ public class UsuarioUnidadeService {
         UsuarioUnidade vinculoSalvo =
                 usuarioUnidadeRepository.save(vinculo);
 
+
+        // registra o evento de auditoria na mesma transação
+        auditoriaService.registrar(
+                recuperarAdministradorAuditoria(), "VINCULAR", "USUARIO_UNIDADE", usuarioId,
+                Map.of("usuarioId", usuarioId, "unidadeId", dto.unidadeId(), "ativo", true)
+        );
+
         // retorna os dados do vínculo persistido
         return converterParaResponseDTO(vinculoSalvo);
     }
@@ -180,6 +196,13 @@ public class UsuarioUnidadeService {
         UsuarioUnidade vinculoSalvo =
                 usuarioUnidadeRepository.save(vinculo);
 
+
+        // registra o evento de auditoria na mesma transação
+        auditoriaService.registrar(
+                recuperarAdministradorAuditoria(), "DESVINCULAR", "USUARIO_UNIDADE", usuarioId,
+                Map.of("usuarioId", usuarioId, "unidadeId", unidadeId, "ativo", false)
+        );
+
         // retorna os dados atualizados
         return converterParaResponseDTO(vinculoSalvo);
     }
@@ -197,5 +220,18 @@ public class UsuarioUnidadeService {
                 vinculo.getAtivo(),
                 vinculo.getDataVinculo()
         );
+    }
+
+    // identifica o administrador autenticado sem utilizar dados do corpo da requisição
+    private Usuario recuperarAdministradorAuditoria() {
+        Authentication autenticacao = SecurityContextHolder.getContext().getAuthentication();
+        if (autenticacao == null || !autenticacao.isAuthenticated()
+                || autenticacao.getAuthorities().stream().noneMatch(
+                        autoridade -> "ROLE_ADMIN".equals(autoridade.getAuthority()))) {
+            throw new AccessDeniedException("Acesso administrativo obrigatório.");
+        }
+        return usuarioRepository.findByEmail(autenticacao.getName())
+                .filter(usuario -> Boolean.TRUE.equals(usuario.getAtivo()))
+                .orElseThrow(() -> new AccessDeniedException("Administrador não encontrado ou inativo."));
     }
 }

@@ -21,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -34,6 +35,9 @@ public class PagamentoService {
             Set.of("ADMIN", "GERENTE", "ATENDENTE", "CLIENTE");
 
     // dependências utilizadas no processamento dos pagamentos
+    // serviço responsável pela auditoria transacional
+    private final AuditoriaService auditoriaService;
+
     private final PagamentoRepository pagamentoRepository;
     private final PedidoRepository pedidoRepository;
     private final ProdutoUnidadeRepository produtoUnidadeRepository;
@@ -50,8 +54,10 @@ public class PagamentoService {
             MovimentacaoEstoqueRepository movimentacaoEstoqueRepository,
             UsuarioRepository usuarioRepository,
             PermissaoUnidadeService permissaoUnidadeService,
-            GatewayPagamentoMock gatewayPagamentoMock
+            GatewayPagamentoMock gatewayPagamentoMock,
+            AuditoriaService auditoriaService
     ) {
+        this.auditoriaService = auditoriaService;
         this.pagamentoRepository = pagamentoRepository;
         this.pedidoRepository = pedidoRepository;
         this.produtoUnidadeRepository = produtoUnidadeRepository;
@@ -166,6 +172,13 @@ public class PagamentoService {
         // persiste o resultado da tentativa de pagamento
         Pagamento pagamentoSalvo =
                 pagamentoRepository.save(pagamento);
+
+
+        // registra o evento de auditoria na mesma transação
+        auditoriaService.registrar(
+                usuario, resultado.status() == StatusPagamento.APROVADO ? "APROVAR" : "RECUSAR", "PAGAMENTO", pagamentoSalvo.getId(),
+                Map.of("pedidoId", pedidoId, "metodo", dto.metodo().name(), "valor", pagamentoSalvo.getValor(), "statusPedido", pedido.getStatus().name())
+        );
 
         // retorna os dados da transação registrada
         return converterParaResponseDTO(pagamentoSalvo);

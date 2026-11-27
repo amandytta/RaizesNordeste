@@ -190,14 +190,51 @@ public class SecurityConfig {
                                         "/api/pedidos/**"
                                 ).denyAll()
 
-                                // exige autenticacao para as demais requisicoes
+                                // permite que usuários autenticados registrem seus consentimentos
+                                .requestMatchers(
+                                        HttpMethod.POST,
+                                        "/api/consentimentos"
+                                ).hasAnyRole("ADMIN", "GERENTE", "ATENDENTE", "CLIENTE")
+
+                                // permite a consulta do próprio histórico de consentimentos
+                                .requestMatchers(
+                                        HttpMethod.GET,
+                                        "/api/consentimentos/meus"
+                                ).hasAnyRole("ADMIN", "GERENTE", "ATENDENTE", "CLIENTE")
+
+                                // permite a consulta da situação atual dos próprios consentimentos
+                                .requestMatchers(
+                                        HttpMethod.GET,
+                                        "/api/consentimentos/meus/atuais"
+                                ).hasAnyRole("ADMIN", "GERENTE", "ATENDENTE", "CLIENTE")
+
+                                // bloqueia operações de consentimento não autorizadas
+                                .requestMatchers(
+                                        "/api/consentimentos",
+                                        "/api/consentimentos/**"
+                                ).denyAll()
+
+                                // restringe a consulta de auditoria aos administradores
+                                .requestMatchers(
+                                        HttpMethod.GET,
+                                        "/api/auditorias",
+                                        "/api/auditorias/*"
+                                ).hasRole("ADMIN")
+
+                                // bloqueia operações de auditoria não autorizadas
+                                .requestMatchers(
+                                        "/api/auditorias",
+                                        "/api/auditorias/**"
+                                ).denyAll()
+
+                                // exige autenticação para as demais requisicoes
                                 .anyRequest().authenticated()
                 )
 
-                // desabilita explicitamente a autenticacao HTTP Basic
+                // desabilita explicitamente a autenticação HTTP Basic
                 .httpBasic(basic -> basic.disable())
 
-                // desabilita a autenticacao por formulario
+                // desabilita a autenticação por formulario
                 .formLogin(form -> form.disable())
 
 

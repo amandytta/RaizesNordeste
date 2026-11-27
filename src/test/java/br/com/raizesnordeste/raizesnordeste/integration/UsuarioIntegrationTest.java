@@ -131,6 +131,12 @@ class UsuarioIntegrationTest {
 
         // percorre exclusivamente os e-mails utilizados pelo teste
         for (String email : emailsUsuariosTeste) {
+            // remove somente eventos associados ao usuário fictício
+            jdbcTemplate.update("""
+                    DELETE a FROM auditoria a
+                    JOIN usuario u ON u.id = a.usuario_id
+                    WHERE u.email = ?
+                    """, email);
 
             // remove primeiro os relacionamentos entre usuários e perfis
             jdbcTemplate.update("""

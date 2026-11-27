@@ -314,6 +314,12 @@ class UsuarioAdministracaoIntegrationTest {
 
         // remove os registros respeitando as chaves estrangeiras
         for (String email : emailsUsuariosTeste) {
+            // remove somente eventos associados ao usuário fictício
+            jdbcTemplate.update("""
+                    DELETE a FROM auditoria a
+                    JOIN usuario u ON u.id = a.usuario_id
+                    WHERE u.email = ?
+                    """, email);
 
             // remove os vínculos do usuário com as unidades
             jdbcTemplate.update("""
@@ -1240,6 +1246,9 @@ class UsuarioAdministracaoIntegrationTest {
     void deveImpedirVinculosConcorrentesDeAtendente()
             throws Exception {
 
+        // autentica o administrador responsável pelas duas operações
+        String admin = autenticarAdministrador();
+
         // cria um atendente temporário sem vínculos anteriores
         String email = criarUsuarioTeste("ATENDENTE", true);
 
@@ -1276,10 +1285,19 @@ class UsuarioAdministracaoIntegrationTest {
                 try {
 
                     // tenta vincular o atendente à primeira unidade
-                    usuarioUnidadeService.vincular(
-                            usuarioId,
-                            new UsuarioUnidadeRequestDTO(unidadeId1)
-                    );
+                    var respostaVinculo = mockMvc.perform(post("/api/usuarios/{id}/unidades", usuarioId)
+                                    .header("Authorization", "Bearer " + admin)
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content(criarJsonVinculo(unidadeId1)))
+                            .andReturn().getResponse();
+                    int statusHttp = respostaVinculo.getStatus();
+                    // confirma que somente sucesso ou conflito são aceitos
+                    assertTrue(statusHttp == 200 || statusHttp == 409);
+                    if (statusHttp == 409) {
+                        assertEquals("O atendente já possui vínculo ativo com outra unidade.",
+                                JsonPath.read(respostaVinculo.getContentAsString(), "$.mensagem"));
+                        return false;
+                    }
 
                     return true;
 
@@ -1311,10 +1329,19 @@ class UsuarioAdministracaoIntegrationTest {
                 try {
 
                     // tenta vincular o atendente à segunda unidade
-                    usuarioUnidadeService.vincular(
-                            usuarioId,
-                            new UsuarioUnidadeRequestDTO(unidadeId2)
-                    );
+                    var respostaVinculo = mockMvc.perform(post("/api/usuarios/{id}/unidades", usuarioId)
+                                    .header("Authorization", "Bearer " + admin)
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content(criarJsonVinculo(unidadeId2)))
+                            .andReturn().getResponse();
+                    int statusHttp = respostaVinculo.getStatus();
+                    // confirma que somente sucesso ou conflito são aceitos
+                    assertTrue(statusHttp == 200 || statusHttp == 409);
+                    if (statusHttp == 409) {
+                        assertEquals("O atendente já possui vínculo ativo com outra unidade.",
+                                JsonPath.read(respostaVinculo.getContentAsString(), "$.mensagem"));
+                        return false;
+                    }
 
                     return true;
 
@@ -1434,7 +1461,12 @@ class UsuarioAdministracaoIntegrationTest {
         Long unidadeB = criarUnidadeTeste(true);
         Long estoqueA = criarEstoqueTeste(unidadeA);
         Long estoqueB = criarEstoqueTeste(unidadeB);
-        usuarioUnidadeService.vincular(buscarUsuarioId(email), new UsuarioUnidadeRequestDTO(unidadeA));
+        // realiza o vínculo com a identidade administrativa real
+        mockMvc.perform(post("/api/usuarios/{id}/unidades", buscarUsuarioId(email))
+                        .header("Authorization", "Bearer " + admin)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(criarJsonVinculo(unidadeA)))
+                .andExpect(status().isOk());
         String gerente = autenticarUsuario(email);
 
         // o administrador pode consultar o histórico global
@@ -1471,7 +1503,12 @@ class UsuarioAdministracaoIntegrationTest {
         Long unidadeB = criarUnidadeTeste(true);
         Long estoqueA = criarEstoqueTeste(unidadeA);
         Long estoqueB = criarEstoqueTeste(unidadeB);
-        usuarioUnidadeService.vincular(buscarUsuarioId(email), new UsuarioUnidadeRequestDTO(unidadeA));
+        // realiza o vínculo com a identidade administrativa real
+        mockMvc.perform(post("/api/usuarios/{id}/unidades", buscarUsuarioId(email))
+                        .header("Authorization", "Bearer " + admin)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(criarJsonVinculo(unidadeA)))
+                .andExpect(status().isOk());
         String atendente = autenticarUsuario(email);
         String cliente = autenticarUsuario(criarUsuarioTeste("CLIENTE", true));
         // Cria um histórico real na unidade não autorizada para testar acesso por ID.
@@ -1503,7 +1540,12 @@ class UsuarioAdministracaoIntegrationTest {
         String email = criarUsuarioTeste("ATENDENTE", true);
         Long usuarioId = buscarUsuarioId(email);
         Long unidadeId = criarUnidadeTeste(true);
-        usuarioUnidadeService.vincular(usuarioId, new UsuarioUnidadeRequestDTO(unidadeId));
+        // realiza o vínculo com a identidade administrativa real
+        mockMvc.perform(post("/api/usuarios/{id}/unidades", usuarioId)
+                        .header("Authorization", "Bearer " + admin)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(criarJsonVinculo(unidadeId)))
+                .andExpect(status().isOk());
         String token = autenticarUsuario(email);
         // Confirma acesso antes da revogação.
         mockMvc.perform(get("/api/movimentacoes-estoque/unidade/{id}", unidadeId)

@@ -14,10 +14,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 
 @Service
 public class MovimentacaoEstoqueService {
+
+    // serviço responsável pela auditoria transacional
+    private final AuditoriaService auditoriaService;
 
     private final MovimentacaoEstoqueRepository movimentacaoEstoqueRepository;
     private final ProdutoUnidadeRepository produtoUnidadeRepository;
@@ -31,8 +35,10 @@ public class MovimentacaoEstoqueService {
             MovimentacaoEstoqueRepository movimentacaoEstoqueRepository,
             ProdutoUnidadeRepository produtoUnidadeRepository,
             UsuarioRepository usuarioRepository,
-            PermissaoUnidadeService permissaoUnidadeService) {
+            PermissaoUnidadeService permissaoUnidadeService,
+            AuditoriaService auditoriaService) {
 
+        this.auditoriaService = auditoriaService;
         this.movimentacaoEstoqueRepository = movimentacaoEstoqueRepository;
         this.produtoUnidadeRepository = produtoUnidadeRepository;
         this.usuarioRepository = usuarioRepository;
@@ -244,6 +250,13 @@ public class MovimentacaoEstoqueService {
         // persiste o histórico dentro da mesma transação do estoque
         MovimentacaoEstoque movimentacaoSalva =
                 movimentacaoEstoqueRepository.save(movimentacao);
+
+
+        // registra o evento de auditoria na mesma transação
+        auditoriaService.registrar(
+                usuario, "REGISTRAR", "MOVIMENTACAO_ESTOQUE", movimentacaoSalva.getId(),
+                Map.of("produtoUnidadeId", produtoUnidade.getId(), "tipo", dto.tipo().name(), "quantidade", dto.quantidade(), "estoqueAnterior", estoqueAnterior, "estoquePosterior", estoquePosterior)
+        );
 
         return MovimentacaoEstoqueResponseDTO.fromEntity(movimentacaoSalva);
     }

@@ -20,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -37,6 +38,9 @@ public class PedidoService {
             Set.of("ADMIN", "GERENTE", "ATENDENTE", "CLIENTE");
 
     // dependências utilizadas pelas operações de pedidos
+    // serviço responsável pela auditoria transacional
+    private final AuditoriaService auditoriaService;
+
     private final PedidoRepository pedidoRepository;
     private final ProdutoUnidadeRepository produtoUnidadeRepository;
     private final UnidadeRepository unidadeRepository;
@@ -49,8 +53,10 @@ public class PedidoService {
             ProdutoUnidadeRepository produtoUnidadeRepository,
             UnidadeRepository unidadeRepository,
             UsuarioRepository usuarioRepository,
-            PermissaoUnidadeService permissaoUnidadeService
+            PermissaoUnidadeService permissaoUnidadeService,
+            AuditoriaService auditoriaService
     ) {
+        this.auditoriaService = auditoriaService;
         this.pedidoRepository = pedidoRepository;
         this.produtoUnidadeRepository = produtoUnidadeRepository;
         this.unidadeRepository = unidadeRepository;
@@ -206,6 +212,13 @@ public class PedidoService {
 
         // persiste o pedido e seus itens na mesma transação
         Pedido pedidoSalvo = pedidoRepository.save(pedido);
+
+
+        // registra o evento de auditoria na mesma transação
+        auditoriaService.registrar(
+                usuario, "CADASTRAR", "PEDIDO", pedidoSalvo.getId(),
+                Map.of("unidadeId", unidade.getId(), "canalPedido", pedidoSalvo.getCanalPedido().name(), "valorTotal", pedidoSalvo.getValorTotal())
+        );
 
         // retorna os dados do pedido cadastrado
         return converterParaResponseDTO(pedidoSalvo);
@@ -377,6 +390,7 @@ public class PedidoService {
         );
 
         // recupera o novo status solicitado
+        StatusPedido statusAnterior = pedido.getStatus();
         StatusPedido novoStatus = dto.status();
 
         // valida se a transição solicitada é permitida
@@ -390,6 +404,13 @@ public class PedidoService {
         // sincroniza as alterações com o banco de dados
         // garante a atualização da data antes de montar a resposta
         pedidoRepository.flush();
+
+
+        // registra o evento de auditoria na mesma transação
+        auditoriaService.registrar(
+                usuario, "ATUALIZAR_STATUS", "PEDIDO", pedido.getId(),
+                Map.of("statusAnterior", statusAnterior.name(), "statusNovo", novoStatus.name())
+        );
 
         // retorna os dados atualizados do pedido
         return converterParaResponseDTO(pedido);
@@ -485,6 +506,13 @@ public class PedidoService {
 
         // sincroniza as alterações com o banco de dados
         pedidoRepository.flush();
+
+
+        // registra o evento de auditoria na mesma transação
+        auditoriaService.registrar(
+                usuario, "CANCELAR", "PEDIDO", pedido.getId(),
+                Map.of("statusAnterior", StatusPedido.AGUARDANDO_PAGAMENTO.name(), "statusNovo", StatusPedido.CANCELADO.name())
+        );
 
         // retorna os dados do pedido cancelado
         return converterParaResponseDTO(pedido);

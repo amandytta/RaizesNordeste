@@ -11,6 +11,10 @@ import br.com.raizesnordeste.raizesnordeste.repository.UnidadeRepository;
 import br.com.raizesnordeste.raizesnordeste.repository.UsuarioRepository;
 import br.com.raizesnordeste.raizesnordeste.repository.UsuarioUnidadeRepository;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -46,14 +50,41 @@ class UsuarioUnidadeServiceTest {
     private UsuarioUnidadeService usuarioUnidadeService;
 
     // inicializa o serviço antes de cada teste
+    @Mock
+    private AuditoriaService auditoriaService;
+
     @BeforeEach
     void setUp() {
         usuarioUnidadeService = new UsuarioUnidadeService(
                 usuarioUnidadeRepository,
                 usuarioRepository,
-                unidadeRepository
+                unidadeRepository,
+                auditoriaService
         );
     }
+
+    // simula o administrador responsável apenas nos cenários administrativos bem-sucedidos
+    private void autenticarAdministrador() {
+        Usuario administrador = new Usuario();
+        ReflectionTestUtils.setField(administrador, "id", 99L);
+        administrador.setEmail("admin.teste@raizes.local");
+        administrador.setAtivo(true);
+        Perfil perfil = new Perfil();
+        perfil.setNome("ADMIN");
+        administrador.setPerfis(Set.of(perfil));
+        when(usuarioRepository.findByEmail(administrador.getEmail()))
+                .thenReturn(Optional.of(administrador));
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(administrador.getEmail(), null,
+                        List.of(new SimpleGrantedAuthority("ROLE_ADMIN"))));
+    }
+
+    // evita que a autenticação simulada seja reutilizada por outro teste
+    @AfterEach
+    void limparAutenticacao() {
+        SecurityContextHolder.clearContext();
+    }
+
 
     // cria um usuário simulado com o perfil e a situação informados
     private Usuario criarUsuario(String nomePerfil, boolean ativo) {
@@ -108,6 +139,8 @@ class UsuarioUnidadeServiceTest {
     // teste 01: permite vincular um atendente à primeira unidade
     @Test
     void deveVincularAtendenteComSucesso() {
+
+        autenticarAdministrador();
 
         Usuario usuario = criarUsuario("ATENDENTE", true);
         Unidade unidade = criarUnidade(1L, true);
@@ -196,6 +229,8 @@ class UsuarioUnidadeServiceTest {
     // teste 03: permite que um gerente seja associado a outra unidade
     @Test
     void devePermitirMultiplosVinculosParaGerente() {
+
+        autenticarAdministrador();
 
         Usuario usuario = criarUsuario("GERENTE", true);
         Unidade unidade = criarUnidade(2L, true);
@@ -397,6 +432,8 @@ class UsuarioUnidadeServiceTest {
     @Test
     void deveReativarVinculoInativo() {
 
+        autenticarAdministrador();
+
         Usuario usuario = criarUsuario("ATENDENTE", true);
         Unidade unidade = criarUnidade(1L, true);
 
@@ -439,6 +476,8 @@ class UsuarioUnidadeServiceTest {
     // teste 10: permite desativar um vínculo existente
     @Test
     void deveDesvincularUsuarioComSucesso() {
+
+        autenticarAdministrador();
 
         Usuario usuario = criarUsuario("ATENDENTE", true);
         Unidade unidade = criarUnidade(1L, true);

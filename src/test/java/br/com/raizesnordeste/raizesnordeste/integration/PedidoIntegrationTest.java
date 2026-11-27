@@ -1251,6 +1251,12 @@ class PedidoIntegrationTest {
 
         // remove os usuários e seus relacionamentos
         for (String email : emailsTeste) {
+            // remove somente eventos associados ao usuário fictício
+            jdbcTemplate.update("""
+                    DELETE a FROM auditoria a
+                    JOIN usuario u ON u.id = a.usuario_id
+                    WHERE u.email = ?
+                    """, email);
 
             // remove os vínculos com as unidades
             jdbcTemplate.update(
